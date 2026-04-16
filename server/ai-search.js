@@ -121,6 +121,41 @@ const CONNECTION_PHRASES = [
   "sync with",
   "hooks into",
   "hook into",
+  "runs on",
+  "run on",
+];
+
+const SEARCH_SOURCE_WEIGHTS = {
+  primary: 1,
+  enrichment: 1.2,
+  connectionText: 1.35,
+  connection: 1.15,
+};
+
+const AUTOMATION_SIGNAL_TOKENS = [
+  "ansible",
+  "terraform",
+  "saltstack",
+  "api",
+  "automation",
+  "automate",
+  "module",
+  "sdk",
+  "integration",
+];
+
+const REMOTE_ACCESS_SIGNAL_TOKENS = [
+  "vpn",
+  "remote access",
+  "off site",
+  "offsite",
+  "site to site",
+  "wireguard",
+  "openvpn",
+  "ipsec",
+  "tunnel",
+  "tunneling",
+  "secure remote",
 ];
 
 function unwrap(result) {
@@ -244,6 +279,76 @@ function inferConnectedProductIds(normalizedQuery, taxonomyProducts) {
     targetText,
     productIds: matches.map((match) => match.productId),
     labels: matches.map((match) => match.label),
+  };
+}
+
+function buildConnectionTextSearchBody({ query, targetText, filters, signals, size = 18 }) {
+  const filterClauses = SEARCH_FILTER_FIELDS.flatMap(({ key }) =>
+    filters[key]?.length ? [{ terms: { [key]: filters[key] } }] : [],
+  );
+
+  if (signals.listingTypeIntent.hardFilterTypes.length) {
+    filterClauses.push({
+      terms: {
+        listingType: signals.listingTypeIntent.hardFilterTypes,
+      },
+    });
+  }
+
+  return {
+    size,
+    _source: {
+      excludes: ["rawSource"],
+    },
+    highlight: {
+      pre_tags: ["<em>"],
+      post_tags: ["</em>"],
+      fields: {
+        shortDescription: {
+          number_of_fragments: 1,
+          fragment_size: 200,
+        },
+        longDescription: {
+          number_of_fragments: 2,
+          fragment_size: 220,
+        },
+      },
+    },
+    query: {
+      bool: {
+        filter: filterClauses,
+        should: [
+          {
+            multi_match: {
+              query: targetText,
+              fields: [
+                "shortDescription^12",
+                "longDescription^11",
+                "tagline^5",
+                "headline^4",
+                "tags^4",
+              ],
+              type: "phrase",
+              slop: 2,
+            },
+          },
+          {
+            multi_match: {
+              query,
+              fields: [
+                "shortDescription^9",
+                "longDescription^8",
+                "tagline^4",
+                "headline^4",
+                "tags^3",
+              ],
+              type: "best_fields",
+            },
+          },
+        ],
+        minimum_should_match: 1,
+      },
+    },
   };
 }
 
@@ -378,6 +483,17 @@ function inferSignals(query, taxonomyProducts) {
     expansionTerms: uniq(expansionTerms.map((value) => String(value).trim()).filter(Boolean)),
     listingTypeIntent,
     connectionIntent,
+    compoundIntent: inferCompoundIntent(normalizedQuery),
+  };
+}
+
+function inferCompoundIntent(normalizedQuery) {
+  const needsAutomation = AUTOMATION_SIGNAL_TOKENS.some((token) => normalizedQuery.includes(normalizeText(token)));
+  const needsRemoteAccess = REMOTE_ACCESS_SIGNAL_TOKENS.some((token) => normalizedQuery.includes(normalizeText(token)));
+
+  return {
+    needsAutomation,
+    needsRemoteAccess,
   };
 }
 
@@ -686,6 +802,94 @@ function buildEnrichmentSearchBody({ query, signals, size = 18 }) {
   };
 }
 
+async function searchListingsSource({ name, body }) {
+  const result = unwrap(
+    await client.search({
+      index: config.listingsIndex,
+      body,
+    }),
+  );
+
+  return {
+    name,
+    hits: result.hits?.hits || [],
+  };
+}
+
+function mergeCandidateHits(searchResults = []) {
+  const merged = new Map();
+
+  for (const searchResult of searchResults) {
+    const sourceName = searchResult.name;
+
+    (searchResult.hits || []).forEach((hit, index) => {
+      const existing = merged.get(hit._id);
+      const sourceEntry = {
+        rank: index + 1,
+        score: hit._score || 0,
+      };
+
+      if (!existing) {
+        merged.set(hit._id, {
+          ...hit,
+          sourceSignals: {
+            [sourceName]: sourceEntry,
+          },
+        });
+        return;
+      }
+
+      const currentBestScore = existing._score || 0;
+      const nextScore = hit._score || 0;
+      const bestHit = nextScore > currentBestScore ? hit : existing;
+
+      merged.set(hit._id, {
+        ...bestHit,
+        _id: hit._id,
+        _source: bestHit._source || existing._source,
+        highlight: {
+          ...(existing.highlight || {}),
+          ...(hit.highlight || {}),
+        },
+        sourceSignals: {
+          ...(existing.sourceSignals || {}),
+          [sourceName]: sourceEntry,
+        },
+      });
+    });
+  }
+
+  return [...merged.values()];
+}
+
+function reciprocalRankFusion(sourceSignals = {}) {
+  const k = 60;
+
+  return Object.entries(sourceSignals).reduce((sum, [sourceName, signal]) => (
+    sum + ((SEARCH_SOURCE_WEIGHTS[sourceName] || 1) / (k + (signal.rank || k)))
+  ), 0);
+}
+
+function textContainsAny(text, candidates = []) {
+  return candidates.some((candidate) => text.includes(normalizeText(candidate)));
+}
+
+function countTargetPhraseMatches(listing, targetText) {
+  const normalizedTarget = normalizeText(targetText);
+
+  if (!normalizedTarget) {
+    return 0;
+  }
+
+  const shortDescription = normalizeText(listing.shortDescription || "");
+  const longDescription = normalizeText(listing.longDescription || "");
+  const tagline = normalizeText(listing.tagline || "");
+
+  return [shortDescription, longDescription, tagline]
+    .filter((value) => value.includes(normalizedTarget))
+    .length;
+}
+
 async function getEnrichmentCandidateIds({ query, signals, limit = 18 }) {
   try {
     const existsResponse = unwrap(
@@ -751,10 +955,29 @@ function rerankAiResults(hits, signals, taxonomyLookup) {
   return hits.map((hit) => {
     const listing = hit._source || {};
     const reasons = [];
-    let rerankScore = hit._score || 0;
+    const fusionScore = reciprocalRankFusion(hit.sourceSignals || {});
+    let rerankScore = (hit._score || 0) + (fusionScore * 500);
     const listingText = getListingSearchText(listing);
     const queryTokenMatches = signals.queryTokens.filter((token) => listingText.includes(token)).length;
     const listingType = String(listing.listingType || "").trim().toUpperCase();
+    const hasAutomationSignal = textContainsAny(listingText, AUTOMATION_SIGNAL_TOKENS);
+    const hasRemoteAccessSignal = textContainsAny(listingText, REMOTE_ACCESS_SIGNAL_TOKENS);
+    const targetPhraseMatches = countTargetPhraseMatches(listing, signals.connectionIntent.targetText);
+
+    if (hit.sourceSignals?.enrichment) {
+      rerankScore += 20;
+      reasons.push("Matched enriched marketplace retrieval context.");
+    }
+
+    if (hit.sourceSignals?.connectionText) {
+      rerankScore += 30;
+      reasons.push("Matched the requested connection target directly in the listing description.");
+    }
+
+    if (hit.sourceSignals?.connection) {
+      rerankScore += 18;
+      reasons.push("Matched the product-scoped integration retrieval pass.");
+    }
 
     for (const rule of INTENT_RULES) {
       const queryMatched = rule.queryTokens.some((token) => {
@@ -827,6 +1050,31 @@ function rerankAiResults(hits, signals, taxonomyLookup) {
       reasons.push("Includes housekeeping or maintenance workflows.");
     }
 
+    if (signals.compoundIntent.needsAutomation && hasAutomationSignal) {
+      rerankScore += 18;
+      reasons.push("Matches the requested automation or integration requirement.");
+    }
+
+    if (signals.compoundIntent.needsRemoteAccess && hasRemoteAccessSignal) {
+      rerankScore += 18;
+      reasons.push("Matches the requested remote-access or VPN requirement.");
+    }
+
+    if (
+      signals.compoundIntent.needsAutomation
+      && signals.compoundIntent.needsRemoteAccess
+      && hasAutomationSignal
+      && hasRemoteAccessSignal
+    ) {
+      rerankScore += 36;
+      reasons.push("Satisfies both the core solution need and the automation requirement together.");
+    }
+
+    if (targetPhraseMatches) {
+      rerankScore += targetPhraseMatches * 22;
+      reasons.push("Includes the requested connection target directly in short or long description.");
+    }
+
     const highlight = hit.highlight || {};
     const excerpt = truncateText(
       cleanHighlight(
@@ -847,6 +1095,7 @@ function rerankAiResults(hits, signals, taxonomyLookup) {
     return {
       id: hit._id,
       score: hit._score,
+      fusionScore,
       rerankScore,
       excerpt,
       reasons: uniq(reasons).slice(0, 3),
@@ -879,16 +1128,14 @@ function fallbackAnswer(query, suggestions) {
     return `I could not find a strong marketplace match for "${query}". Try adding a product, business domain, or integration target like OCI or Hospitality.`;
   }
 
-  const topReason = (top.reasons[0] || "its description aligns closely with the request")
-    .replace(/\.$/, "")
-    .toLowerCase();
+  const topReason = buildTopReason(top);
   const topCapability = truncateText(
     top.shortDescription || top.tagline || top.excerpt || top.longDescription,
     140,
   );
 
   const sentences = [
-    `These solutions are the best matches for what you described, and in particular ${top.displayName} stands out because it meets your requirements to ${topReason}.`,
+    `These solutions are the best matches for what you described, and in particular ${top.displayName} stands out because ${topReason}.`,
     topCapability ? `${top.displayName} is especially relevant because ${topCapability.charAt(0).toLowerCase()}${topCapability.slice(1)}.` : "",
     "I've ranked them by what I think best fits what you're looking for.",
   ];
@@ -904,16 +1151,92 @@ function fallbackAnswer(query, suggestions) {
   return sentences.filter(Boolean).join(" ");
 }
 
-function buildPrompt(query, suggestions) {
+function buildTopReason(top) {
+  const reasons = Array.isArray(top?.reasons) ? top.reasons : [];
+  const preferredReason = reasons.find((reason) => (
+    reason
+    && !reason.startsWith("Matched ")
+    && ![
+      "Matched enriched marketplace retrieval context.",
+      "Matched the product-scoped integration retrieval pass.",
+    ].includes(reason)
+  ));
+
+  if (preferredReason) {
+    const normalizedReason = preferredReason.replace(/\.$/, "");
+    const loweredReason = normalizedReason.charAt(0).toLowerCase() + normalizedReason.slice(1);
+
+    if (/^(matches|satisfies|belongs|covers|includes|aligns|supports|targets|fits)\b/i.test(loweredReason)) {
+      return `it ${loweredReason}`;
+    }
+
+    return loweredReason;
+  }
+
+  const capability = truncateText(
+    top?.shortDescription || top?.tagline || top?.excerpt || top?.longDescription,
+    160,
+  ).replace(/\.$/, "");
+
+  if (capability) {
+    return capability.charAt(0).toLowerCase() + capability.slice(1);
+  }
+
+  return "its description aligns closely with your request";
+}
+
+function buildDeterministicLead(suggestions) {
+  const [top] = suggestions;
+
+  if (!top) {
+    return "";
+  }
+
+  const topReason = buildTopReason(top);
+
+  return [
+    `These solutions are the best matches for what you described, and in particular ${top.displayName} stands out because ${topReason}.`,
+    "I've ranked them by what I think best fits what you're looking for.",
+  ].join(" ");
+}
+
+function cleanGeneratedContinuation(text, lead) {
+  const normalizedLead = String(lead || "").trim();
+  let cleaned = String(text || "").replace(/\s+/g, " ").trim();
+
+  if (!cleaned) {
+    return "";
+  }
+
+  if (normalizedLead && cleaned.startsWith(normalizedLead)) {
+    cleaned = cleaned.slice(normalizedLead.length).trim();
+  }
+
+  cleaned = cleaned.replace(
+    /^these solutions are the best matches for what you described,?\s*/i,
+    "",
+  );
+  cleaned = cleaned.replace(
+    /^i(?: have|'ve) ranked them by what i think best fits what you(?:'re| are) looking for\.?\s*/i,
+    "",
+  );
+  cleaned = cleaned.replace(/\s+\./g, ".");
+
+  return cleaned.trim();
+}
+
+function buildPrompt(query, suggestions, lead) {
   return [
     "You are Oracle Marketplace AI Search.",
     "Answer the user's request using only the retrieved marketplace listings.",
     "Do not invent capabilities that are not present in the listings.",
     "Keep the answer concise, practical, and written in natural language.",
-    "Start with a sentence in this style: These solutions are the best matches for what you described, and in particular <top listing> stands out because it meets your requirements to <reason>.",
-    "In the next sentence, say that you ranked them by what you think best fits what the user is looking for.",
-    "Then write one short paragraph summarizing the top recommendation and the next best alternatives.",
+    "Listing #1 is already the highest-ranked result. Treat it as the top recommendation.",
+    "The response must continue after the required opening below. Do not restate or contradict that opening.",
+    "Then write one short paragraph summarizing why listing #1 is the best fit and why listings #2 and #3 are the next best alternatives.",
     "Do not use markdown, bold text, bullets, numbering, or labels like 'Strongest match' or 'Alternatives'.",
+    "",
+    `Required opening: ${lead}`,
     "",
     `User request: ${query}`,
     "",
@@ -984,6 +1307,7 @@ async function generateGroundedAnswer(query, suggestions) {
   }
 
   try {
+    const lead = buildDeterministicLead(suggestions);
     const response = await fetch(`${getGenAiEndpoint()}/20231130/actions/v1/chat/completions`, {
       method: "POST",
       headers: {
@@ -999,7 +1323,7 @@ async function generateGroundedAnswer(query, suggestions) {
           },
           {
             role: "user",
-            content: buildPrompt(query, suggestions.slice(0, 6)),
+            content: buildPrompt(query, suggestions.slice(0, 6), lead),
           },
         ],
         temperature: 0.2,
@@ -1014,6 +1338,7 @@ async function generateGroundedAnswer(query, suggestions) {
 
     const payload = await response.json();
     const text = extractLlmText(payload);
+    const continuation = cleanGeneratedContinuation(text, lead);
 
     if (!text) {
       return {
@@ -1025,7 +1350,7 @@ async function generateGroundedAnswer(query, suggestions) {
 
     return {
       mode: "rag-llm",
-      answer: text,
+      answer: [lead, continuation].filter(Boolean).join(" ").trim(),
       llmEnabled: true,
     };
   } catch (error) {
@@ -1067,17 +1392,43 @@ export async function aiSearchListings({ q = "", filters = {}, limit = 6 }) {
   const taxonomyProducts = await getProductTaxonomy();
   const signals = inferSignals(query, taxonomyProducts);
   const searchSize = Math.max(limit * 4, 18);
-  let result = null;
   const enrichmentCandidateIds = await getEnrichmentCandidateIds({
     query,
     signals,
     limit: searchSize,
   });
+  let connectionTextHitCount = 0;
+  const searchRequests = [
+    searchListingsSource({
+      name: "primary",
+      body: buildAiSearchBody({
+        query,
+        filters,
+        signals,
+        size: searchSize,
+      }),
+    }),
+  ];
+
+  if (signals.connectionIntent.targetText) {
+    searchRequests.push(
+      searchListingsSource({
+        name: "connectionText",
+        body: buildConnectionTextSearchBody({
+          query,
+          targetText: signals.connectionIntent.targetText,
+          filters,
+          signals,
+          size: searchSize,
+        }),
+      }),
+    );
+  }
 
   if (enrichmentCandidateIds.length) {
-    const enrichmentBackedResult = unwrap(
-      await client.search({
-        index: config.listingsIndex,
+    searchRequests.push(
+      searchListingsSource({
+        name: "enrichment",
         body: buildAiSearchBody({
           query,
           filters,
@@ -1087,54 +1438,29 @@ export async function aiSearchListings({ q = "", filters = {}, limit = 6 }) {
         }),
       }),
     );
-
-    const enrichmentHitCount = typeof enrichmentBackedResult.hits?.total === "number"
-      ? enrichmentBackedResult.hits.total
-      : enrichmentBackedResult.hits?.total?.value || 0;
-
-    if (enrichmentHitCount > 0) {
-      result = enrichmentBackedResult;
-    }
   }
 
-  if (!result && signals.connectionIntent.productIds.length) {
-    const strictConnectionResult = unwrap(
-      await client.search({
-        index: config.listingsIndex,
-        body: buildAiSearchBody({
-          query,
-          filters,
-          signals,
-          size: searchSize,
-          strictConnectionProductIds: signals.connectionIntent.productIds,
-        }),
+  const searchResults = await Promise.all(searchRequests);
+  const connectionTextResult = searchResults.find((result) => result.name === "connectionText");
+  connectionTextHitCount = connectionTextResult?.hits?.length || 0;
+
+  if (!connectionTextHitCount && signals.connectionIntent.productIds.length) {
+    const connectionFallbackResult = await searchListingsSource({
+      name: "connection",
+      body: buildAiSearchBody({
+        query,
+        filters,
+        signals,
+        size: searchSize,
+        strictConnectionProductIds: signals.connectionIntent.productIds,
       }),
-    );
+    });
 
-    const strictHitCount = typeof strictConnectionResult.hits?.total === "number"
-      ? strictConnectionResult.hits.total
-      : strictConnectionResult.hits?.total?.value || 0;
-
-    if (strictHitCount > 0) {
-      result = strictConnectionResult;
-    }
+    searchResults.push(connectionFallbackResult);
   }
 
-  if (!result) {
-    result = unwrap(
-      await client.search({
-        index: config.listingsIndex,
-        body: buildAiSearchBody({
-          query,
-          filters,
-          signals,
-          size: searchSize,
-        }),
-      }),
-    );
-  }
-
-  const reranked = rerankAiResults(result.hits?.hits || [], signals, buildTaxonomyLookup(taxonomyProducts));
+  const mergedHits = mergeCandidateHits(searchResults);
+  const reranked = rerankAiResults(mergedHits, signals, buildTaxonomyLookup(taxonomyProducts));
   const suggestions = reranked.slice(0, limit);
   const answerPayload = await generateGroundedAnswer(query, suggestions);
 

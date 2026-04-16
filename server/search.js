@@ -77,6 +77,27 @@ function buildTaxonomyLookup(products) {
   return { productById, categoryByKey, filterByKey };
 }
 
+function uniq(values = []) {
+  return [...new Set(values.filter(Boolean))];
+}
+
+function decorateListingWithTaxonomy(listing, taxonomyProducts = []) {
+  const taxonomy = buildTaxonomyLookup(taxonomyProducts);
+
+  return {
+    ...listing,
+    productLabels: uniq(
+      (listing.productIds || []).map((productId) => taxonomy.productById.get(productId)?.label || productId),
+    ),
+    productCategoryLabels: uniq(
+      (listing.productCategoryKeys || []).map((key) => taxonomy.categoryByKey.get(key)?.label || key.split("/")[1] || key),
+    ),
+    productFilterLabels: uniq(
+      (listing.productFilterKeys || []).map((key) => taxonomy.filterByKey.get(key)?.label || key.split("/")[1] || key),
+    ),
+  };
+}
+
 function formatFacets(aggregations = {}, taxonomyProducts = []) {
   const taxonomy = buildTaxonomyLookup(taxonomyProducts);
 
@@ -164,7 +185,7 @@ export async function searchListings({ q = "", filters = {}, page = 1, pageSize 
       return {
         id: hit._id,
         score: hit._score,
-        ...listing,
+        ...decorateListingWithTaxonomy(listing, taxonomyProducts),
       };
     }),
     facets: formatFacets(result.aggregations, taxonomyProducts),
@@ -172,19 +193,25 @@ export async function searchListings({ q = "", filters = {}, page = 1, pageSize 
 }
 
 export async function getListingById(id) {
-  const result = unwrap(
-    await client.get({
-      index: config.listingsIndex,
-      id,
-    }),
-  );
+  const [result, taxonomyProducts] = await Promise.all([
+    unwrap(
+      await client.get({
+        index: config.listingsIndex,
+        id,
+      }),
+    ),
+    getProductTaxonomy(),
+  ]);
 
   if (!result?._source) {
     return null;
   }
 
   const { rawSource, ...listing } = result._source;
-  return { id: result._id, ...listing };
+  return {
+    id: result._id,
+    ...decorateListingWithTaxonomy(listing, taxonomyProducts),
+  };
 }
 
 export async function getProductTaxonomy({ includeCounts = false } = {}) {

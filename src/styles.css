@@ -1200,6 +1200,12 @@ button {
   border-radius: 16px;
 }
 
+.detail-main-column > :first-child,
+.detail-sidebar > :first-child {
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+
 .overview-section h2,
 .detail-sidebar-card h2 {
   margin: 0 0 14px;

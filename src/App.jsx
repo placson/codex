@@ -1417,19 +1417,27 @@ function ListingDetailPage({ listingId, activeTab }) {
               <OverviewSection title="What this app supports">
                 <div className="detail-support-grid">
                   <div className="detail-support-card">
-                    <h3>Capabilities</h3>
+                    <h3>Solution Type</h3>
                     <div className="chip-stack">
                       {(listing.capabilities || []).length
                         ? listing.capabilities.map((value) => <Pill key={value}>{value}</Pill>)
-                        : <p>No capability metadata provided.</p>}
+                        : <p>No solution type metadata provided.</p>}
                     </div>
                   </div>
                   <div className="detail-support-card">
-                    <h3>Industries</h3>
+                    <h3>Products</h3>
                     <div className="chip-stack">
-                      {(listing.industries || []).length
-                        ? listing.industries.map((value) => <Pill key={value} muted>{value}</Pill>)
-                        : <p>No industry metadata provided.</p>}
+                      {(listing.productLabels || []).length
+                        ? listing.productLabels.map((value) => <Pill key={value} muted>{value}</Pill>)
+                        : <p>No product metadata provided.</p>}
+                    </div>
+                  </div>
+                  <div className="detail-support-card">
+                    <h3>Categories</h3>
+                    <div className="chip-stack">
+                      {(listing.categories || []).length
+                        ? listing.categories.map((value) => <Pill key={value} muted>{value}</Pill>)
+                        : <p>No category metadata provided.</p>}
                     </div>
                   </div>
                 </div>
