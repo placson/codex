@@ -1,0 +1,47 @@
+
+> oracle-marketplace@0.1.0 dev:all
+> npm run opensearch:up && concurrently -k "npm:dev:server" "npm run dev -- --host 0.0.0.0"
+
+
+> oracle-marketplace@0.1.0 opensearch:up
+> docker compose up -d opensearch dashboards
+
+ Network marketplace_default  Creating
+ Network marketplace_default  Created
+ Container oracle-marketplace-opensearch  Creating
+ Container oracle-marketplace-opensearch  Created
+ Container oracle-marketplace-dashboards  Creating
+ Container oracle-marketplace-dashboards  Created
+ Container oracle-marketplace-opensearch  Starting
+ Container oracle-marketplace-opensearch  Started
+ Container oracle-marketplace-dashboards  Starting
+ Container oracle-marketplace-dashboards  Started
+[dev:server] 
+[dev:server] > oracle-marketplace@0.1.0 dev:server
+[dev:server] > node --watch server/index.js
+[dev:server] 
+[1] 
+[1] > oracle-marketplace@0.1.0 dev
+[1] > vite --host 0.0.0.0
+[1] 
+[dev:server] (node:92828) ExperimentalWarning: Watch mode is an experimental feature and might change at any time
+[dev:server] (Use `node --trace-warnings ...` to show where the warning was created)
+[dev:server] Oracle Marketplace API listening on http://localhost:3000
+[1] 
+[1]   VITE v5.4.21  ready in 87 ms
+[1] 
+[1]   ➜  Local:   http://localhost:5173/
+[1]   ➜  Network: http://192.168.68.69:5173/
+[1]   ➜  Network: http://172.18.0.1:5173/
+[dev:server] Restarting 'server/index.js'
+[dev:server] Oracle Marketplace API listening on http://localhost:3000
+[dev:server] Restarting 'server/index.js'
+[dev:server] Oracle Marketplace API listening on http://localhost:3000
+[dev:server] Restarting 'server/index.js'
+[dev:server] Oracle Marketplace API listening on http://localhost:3000
+[dev:server] Restarting 'server/index.js'
+[dev:server] Oracle Marketplace API listening on http://localhost:3000
+[dev:server] Restarting 'server/index.js'
+[dev:server] Oracle Marketplace API listening on http://localhost:3000
+[dev:server] Restarting 'server/index.js'
+[dev:server] Oracle Marketplace API listening on http://localhost:3000
