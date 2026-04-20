@@ -1,7 +1,9 @@
 import { client } from "./opensearch.js";
 import { config } from "./config.js";
+import { embedText } from "./embeddings.js";
 import { getProductTaxonomy } from "./search.js";
 import { SEARCH_FILTER_FIELDS } from "../shared/listings.js";
+import { cosineSimilarity } from "../shared/vector.js";
 
 const AI_FIELDS = [
   "displayName^8",
@@ -709,12 +711,17 @@ function buildEnrichmentSearchBody({ query, signals, size = 18 }) {
         query,
         fields: [
           "profile^6",
+          "semanticText^6",
           "retrievalText^5",
           "productLabels^7",
           "mentionedProductLabels^5",
           "categoryLabels^4",
           "filterLabels^4",
           "useCases^4",
+          "resourceMetadata^3",
+          "resourceText^3",
+          "resourceHosts^2",
+          "resourceNames^3",
           "publisher^2",
         ],
         type: "best_fields",
@@ -800,6 +807,17 @@ function buildEnrichmentSearchBody({ query, signals, size = 18 }) {
       },
     },
   };
+}
+
+function buildSemanticQueryText(query, signals) {
+  return [
+    query,
+    signals.expansionTerms.join(" "),
+    signals.connectionIntent.targetText ? `integration target ${signals.connectionIntent.targetText}` : "",
+    signals.compoundIntent.needsAutomation ? "automation integration api orchestration" : "",
+    signals.compoundIntent.needsRemoteAccess ? "vpn remote access secure access tunneling" : "",
+    signals.listingTypeIntent.priorityTypes.join(" "),
+  ].filter(Boolean).join("\n");
 }
 
 async function searchListingsSource({ name, body }) {
@@ -926,6 +944,93 @@ async function getEnrichmentCandidateIds({ query, signals, limit = 18 }) {
   }
 }
 
+async function applyVectorSignals(hits, { query, signals }) {
+  if (!config.enableVectorSearch || !hits.length) {
+    return hits;
+  }
+
+  try {
+    const existsResponse = unwrap(
+      await client.indices.exists({
+        index: config.listingEnrichmentIndex,
+      }),
+    );
+    const exists = typeof existsResponse === "boolean" ? existsResponse : Boolean(existsResponse);
+
+    if (!exists) {
+      return hits;
+    }
+
+    const listingIds = uniq(hits.map((hit) => hit._id).filter(Boolean));
+
+    if (!listingIds.length) {
+      return hits;
+    }
+
+    const result = unwrap(
+      await client.search({
+        index: config.listingEnrichmentIndex,
+        body: {
+          size: listingIds.length,
+          _source: ["listingId", "semanticEmbedding"],
+          query: {
+            ids: {
+              values: listingIds,
+            },
+          },
+        },
+      }),
+    );
+
+    const queryVector = await embedText(
+      buildSemanticQueryText(query, signals),
+      { dimension: config.embeddingDimension },
+    );
+    const similarityByListingId = new Map(
+      (result.hits?.hits || []).map((hit) => {
+        const listingId = hit._source?.listingId || hit._id;
+        return [
+          listingId,
+          cosineSimilarity(queryVector, hit._source?.semanticEmbedding || []),
+        ];
+      }),
+    );
+
+    const ranked = [...similarityByListingId.entries()]
+      .filter(([, similarity]) => similarity > 0.14)
+      .sort((left, right) => right[1] - left[1]);
+    const rankByListingId = new Map(
+      ranked.map(([listingId], index) => [listingId, index + 1]),
+    );
+
+    return hits.map((hit) => {
+      const similarity = similarityByListingId.get(hit._id) || 0;
+      const rank = rankByListingId.get(hit._id);
+
+      if (!rank) {
+        return hit;
+      }
+
+      return {
+        ...hit,
+        sourceSignals: {
+          ...(hit.sourceSignals || {}),
+          vector: {
+            rank,
+            score: similarity,
+          },
+        },
+      };
+    });
+  } catch (error) {
+    if (String(error?.message || "").includes("index_not_found_exception")) {
+      return hits;
+    }
+
+    throw error;
+  }
+}
+
 function listingTypePriorityRank(signals, listingType) {
   const normalizedType = String(listingType || "").trim().toUpperCase();
   const priorityIndex = signals.listingTypeIntent.priorityTypes.indexOf(normalizedType);
@@ -967,6 +1072,11 @@ function rerankAiResults(hits, signals, taxonomyLookup) {
     if (hit.sourceSignals?.enrichment) {
       rerankScore += 20;
       reasons.push("Matched enriched marketplace retrieval context.");
+    }
+
+    if (hit.sourceSignals?.vector) {
+      rerankScore += 18 + ((hit.sourceSignals.vector.score || 0) * 110);
+      reasons.push("Matched semantic vector similarity across listing and resource context.");
     }
 
     if (hit.sourceSignals?.connectionText) {
@@ -1459,7 +1569,7 @@ export async function aiSearchListings({ q = "", filters = {}, limit = 6 }) {
     searchResults.push(connectionFallbackResult);
   }
 
-  const mergedHits = mergeCandidateHits(searchResults);
+  const mergedHits = await applyVectorSignals(mergeCandidateHits(searchResults), { query, signals });
   const reranked = rerankAiResults(mergedHits, signals, buildTaxonomyLookup(taxonomyProducts));
   const suggestions = reranked.slice(0, limit);
   const answerPayload = await generateGroundedAnswer(query, suggestions);

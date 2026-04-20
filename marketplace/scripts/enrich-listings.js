@@ -1,5 +1,6 @@
 import { client } from "../server/opensearch.js";
 import { config } from "../server/config.js";
+import { embedTexts, embeddingStatus } from "../server/embeddings.js";
 import { getProductTaxonomy } from "../server/search.js";
 import {
   buildListingEnrichmentIndexDefinition,
@@ -106,21 +107,54 @@ async function bulkIndex(indexName, records, batchSize = 200) {
   }
 }
 
+async function applyEmbeddings(records, batchSize = 32) {
+  for (let start = 0; start < records.length; start += batchSize) {
+    const batch = records.slice(start, start + batchSize);
+    const embeddings = await embedTexts(
+      batch.map((record) => record.semanticText || ""),
+      { dimension: config.embeddingDimension },
+    );
+
+    embeddings.forEach((embedding, index) => {
+      batch[index].semanticEmbedding = embedding;
+    });
+
+    console.log(`Embedded ${Math.min(start + batch.length, records.length)} / ${records.length} enrichment records...`);
+  }
+}
+
 async function run() {
   const { replace } = parseArgs(process.argv.slice(2));
   const taxonomyProducts = await getProductTaxonomy();
   const enrichmentRecords = [];
+  const resourceCache = new Map();
 
   await ensureIndex(
     config.listingEnrichmentIndex,
-    buildListingEnrichmentIndexDefinition(),
+    buildListingEnrichmentIndexDefinition({
+      embeddingDimension: config.embeddingDimension,
+    }),
     replace,
   );
 
   for await (const listing of iterateListings()) {
-    enrichmentRecords.push(deriveListingEnrichment(listing, taxonomyProducts));
+    enrichmentRecords.push(await deriveListingEnrichment(listing, taxonomyProducts, {
+      embeddingDimension: config.embeddingDimension,
+      includeEmbedding: false,
+      enableResourceFetch: config.enableResourceFetch,
+      resourceFetchTimeoutMs: config.resourceFetchTimeoutMs,
+      resourceFetchMaxAttachments: config.resourceFetchMaxAttachments,
+      resourceFetchMaxChars: config.resourceFetchMaxChars,
+      resourceCache,
+    }));
   }
 
+  const status = embeddingStatus();
+  console.log(
+    `Embedding provider: ${status.provider} (${status.enabled ? `real model ${status.modelId || "configured"}` : "fallback deterministic"})`,
+  );
+
+  await applyEmbeddings(enrichmentRecords, status.enabled ? 16 : 64);
   await bulkIndex(config.listingEnrichmentIndex, enrichmentRecords, 200);
 
   console.log(
