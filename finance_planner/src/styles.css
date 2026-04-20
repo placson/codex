@@ -533,7 +533,7 @@ select {
 .monte-carlo-summary {
   display: grid;
   gap: 0.9rem;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
 }
 
 .chart-grid-line {
@@ -623,6 +623,8 @@ select {
 
 .projection-card strong {
   font-size: 1.35rem;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
 }
 
 .projection-card--highlight {

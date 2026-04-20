@@ -146,7 +146,7 @@ const chartScenarios = [
 const chartScenarioMap = Object.fromEntries(
   chartScenarios.map((scenario) => [scenario.key, scenario]),
 );
-const monteCarloTrials = 1000;
+const monteCarloTrials = 5000;
 const monteCarloMeanReturn = 0.07;
 const monteCarloVolatility = 0.12;
 
@@ -427,31 +427,63 @@ function isRetirementAssetType(assetType) {
   return retirementAssetTypes.has(assetType);
 }
 
+function getAssetGrowthRatePercent(asset, marketReturnPercent = assumedMarketReturn) {
+  const definition = assetTypeMap[asset.assetType] ?? assetTypeMap.savings;
+
+  if (definition.rateMode === "apr") {
+    return Number(asset.rate);
+  }
+
+  return Math.max(-100, marketReturnPercent - Number(asset.rate));
+}
+
+function projectionLabelForPlan({
+  hasImmediateAccessToAllAssets,
+  bridgeCoveredToAccessAge,
+  yearsUntilRetirementAccountsAccessible,
+  bridgeShortfall,
+}) {
+  if (hasImmediateAccessToAllAssets) {
+    return "Full access to investable assets at retirement";
+  }
+
+  if (bridgeCoveredToAccessAge) {
+    return `Bridge assets cover the first ${yearsUntilRetirementAccountsAccessible} years`;
+  }
+
+  return `Bridge assets are short by ${formatCurrency(bridgeShortfall)}`;
+}
+
 function getInitialRetirementBuckets(assets, yearsToRetirement, marketReturnPercent = 7) {
   const buckets = assets.reduce(
     (totals, asset) => {
       const definition = assetTypeMap[asset.assetType] ?? assetTypeMap.savings;
       const currentAmount = Number(asset.amount);
+      const growthRatePercent = getAssetGrowthRatePercent(asset, marketReturnPercent);
 
       if (definition.rateMode === "apr") {
-        const projectedSavings = projectCompound(currentAmount, Number(asset.rate), yearsToRetirement);
+        const projectedSavings = projectCompound(currentAmount, growthRatePercent, yearsToRetirement);
         return {
           savings: totals.savings + projectedSavings,
-          savingsWeightedRate:
-            totals.savingsWeightedRate + projectedSavings * (Number(asset.rate) / 100),
+          savingsWeightedRate: totals.savingsWeightedRate + projectedSavings * (growthRatePercent / 100),
           availableMarket: totals.availableMarket,
+          availableMarketWeightedFee: totals.availableMarketWeightedFee,
           retirementMarket: totals.retirementMarket,
+          retirementMarketWeightedFee: totals.retirementMarketWeightedFee,
         };
       }
 
-      const projectedMarket = projectCompound(currentAmount, marketReturnPercent, yearsToRetirement);
+      const projectedMarket = projectCompound(currentAmount, growthRatePercent, yearsToRetirement);
+      const weightedFee = projectedMarket * (Number(asset.rate) / 100);
 
       if (isRetirementAssetType(asset.assetType)) {
         return {
           savings: totals.savings,
           savingsWeightedRate: totals.savingsWeightedRate,
           availableMarket: totals.availableMarket,
+          availableMarketWeightedFee: totals.availableMarketWeightedFee,
           retirementMarket: totals.retirementMarket + projectedMarket,
+          retirementMarketWeightedFee: totals.retirementMarketWeightedFee + weightedFee,
         };
       }
 
@@ -459,16 +491,33 @@ function getInitialRetirementBuckets(assets, yearsToRetirement, marketReturnPerc
         savings: totals.savings,
         savingsWeightedRate: totals.savingsWeightedRate,
         availableMarket: totals.availableMarket + projectedMarket,
+        availableMarketWeightedFee: totals.availableMarketWeightedFee + weightedFee,
         retirementMarket: totals.retirementMarket,
+        retirementMarketWeightedFee: totals.retirementMarketWeightedFee,
       };
     },
-    { savings: 0, savingsWeightedRate: 0, availableMarket: 0, retirementMarket: 0 },
+    {
+      savings: 0,
+      savingsWeightedRate: 0,
+      availableMarket: 0,
+      availableMarketWeightedFee: 0,
+      retirementMarket: 0,
+      retirementMarketWeightedFee: 0,
+    },
   );
 
   return {
     ...buckets,
     effectiveSavingsGrowthRate:
       buckets.savings > 0 ? buckets.savingsWeightedRate / buckets.savings : 0,
+    effectiveAvailableMarketFeeRate:
+      buckets.availableMarket > 0
+        ? buckets.availableMarketWeightedFee / buckets.availableMarket
+        : 0,
+    effectiveRetirementMarketFeeRate:
+      buckets.retirementMarket > 0
+        ? buckets.retirementMarketWeightedFee / buckets.retirementMarket
+        : 0,
   };
 }
 
@@ -537,8 +586,14 @@ function buildDeterministicRetirementSeries({
     const yearlyWithdrawal = Math.max(0, inflatedSpend - yearlyRetirementIncome);
 
     remainingSavings *= 1 + initialBuckets.effectiveSavingsGrowthRate;
-    remainingAvailableMarket *= 1 + marketReturnPercent / 100;
-    remainingRetirementMarket *= 1 + marketReturnPercent / 100;
+    remainingAvailableMarket *=
+      1 + Math.max(-0.99, marketReturnPercent / 100 - initialBuckets.effectiveAvailableMarketFeeRate);
+    remainingRetirementMarket *=
+      1 +
+      Math.max(
+        -0.99,
+        marketReturnPercent / 100 - initialBuckets.effectiveRetirementMarketFeeRate,
+      );
 
     let withdrawalRemaining = yearlyWithdrawal;
     const withdrawalFromSavings = Math.min(remainingSavings, withdrawalRemaining);
@@ -593,8 +648,7 @@ function buildProjectedRetirementAssets(
       assetCounts[asset.assetType] > 1
         ? `${definition.label} ${nextSeenCount}`
         : definition.label;
-    const growthRatePercent =
-      definition.rateMode === "apr" ? Number(asset.rate) : marketReturnPercent;
+    const growthRatePercent = getAssetGrowthRatePercent(asset, marketReturnPercent);
 
     return {
       id: asset.id ?? `asset-${index + 1}`,
@@ -705,6 +759,16 @@ function buildRetirementTimetable({
     rows,
     finalBalanceAtEndOfLife: rows.length > 0 ? rows[rows.length - 1].totalEnd : 0,
   };
+}
+
+function sumAssetSnapshotBalances(assetSnapshots, predicate) {
+  return assetSnapshots.reduce((sum, asset) => {
+    if (!predicate(asset)) {
+      return sum;
+    }
+
+    return sum + Number(asset.balanceEnd ?? 0);
+  }, 0);
 }
 
 function normalizeIncomeStreamsResponse(payload) {
@@ -1319,7 +1383,7 @@ export default function App() {
   const [assets, setAssets] = useState([]);
   const [incomeStreams, setIncomeStreams] = useState([]);
   const [newAssetType, setNewAssetType] = useState("savings");
-  const [newIncomeStreamType, setNewIncomeStreamType] = useState("work_in_retirement");
+  const [newIncomeStreamType, setNewIncomeStreamType] = useState("");
   const [selectedScenarioKey, setSelectedScenarioKey] = useState("aboveAverage");
   const [selectedTimeTableScenarioKey, setSelectedTimeTableScenarioKey] = useState("aboveAverage");
   const [isTimeTableExpanded, setIsTimeTableExpanded] = useState(false);
@@ -1430,10 +1494,7 @@ export default function App() {
       (totals, asset) => {
         const definition = assetTypeMap[asset.assetType] ?? assetTypeMap.savings;
         const currentAmount = Number(asset.amount);
-        const annualRate =
-          definition.rateMode === "apr"
-            ? Number(asset.rate)
-            : Math.max(-100, selectedMarketReturn - Number(asset.rate));
+        const annualRate = getAssetGrowthRatePercent(asset, selectedMarketReturn);
         const projectedAmount = projectCompound(currentAmount, annualRate, yearsToRetirement);
 
         return {
@@ -1462,8 +1523,12 @@ export default function App() {
     );
     const yearsUntilRetirementAccountsAccessible = Math.max(0, Math.ceil(59.5 - ageAtRetirement));
     const bridgeAssetsAtRetirement = initialBuckets.savings + initialBuckets.availableMarket;
+    const bridgeSavingsAtRetirement = initialBuckets.savings;
+    const bridgeTaxableAssetsAtRetirement = initialBuckets.availableMarket;
+    const retirementAccountsAtRetirement = initialBuckets.retirementMarket;
     let bridgeSavings = initialBuckets.savings;
     let bridgeAvailableMarket = initialBuckets.availableMarket;
+    let bridgeRetirementMarket = initialBuckets.retirementMarket;
     let bridgeCoveredToAccessAge = true;
     let bridgeShortfall = 0;
 
@@ -1483,7 +1548,18 @@ export default function App() {
       const yearlyWithdrawal = Math.max(0, inflatedSpend - yearlyRetirementIncome);
 
       bridgeSavings *= 1 + initialBuckets.effectiveSavingsGrowthRate;
-      bridgeAvailableMarket *= 1 + selectedMarketReturn / 100;
+      bridgeAvailableMarket *=
+        1 +
+        Math.max(
+          -0.99,
+          selectedMarketReturn / 100 - initialBuckets.effectiveAvailableMarketFeeRate,
+        );
+      bridgeRetirementMarket *=
+        1 +
+        Math.max(
+          -0.99,
+          selectedMarketReturn / 100 - initialBuckets.effectiveRetirementMarketFeeRate,
+        );
 
       let withdrawalRemaining = yearlyWithdrawal;
       const withdrawalFromSavings = Math.min(bridgeSavings, withdrawalRemaining);
@@ -1506,6 +1582,9 @@ export default function App() {
       }
     }
 
+    const bridgeSavingsAtAccessAge = Math.max(0, bridgeSavings);
+    const bridgeTaxableAssetsAtAccessAge = Math.max(0, bridgeAvailableMarket);
+    const retirementAccountsAtAccessAge = Math.max(0, bridgeRetirementMarket);
     const bridgeBalanceAtAccessAge = Math.max(0, bridgeSavings + bridgeAvailableMarket);
     const chartSeries = chartScenarios.map((scenario) => {
       const result = buildDeterministicRetirementSeries({
@@ -1551,6 +1630,68 @@ export default function App() {
       timeTables[selectedScenario.key]?.finalBalanceAtEndOfLife ??
       baseScenario?.finalBalanceAtEndOfLife ??
       0;
+    const selectedTimeTableRows = timeTables[selectedScenario.key]?.rows ?? [];
+    const firstYearRow = timeTables[selectedScenario.key]?.rows?.[0];
+    const firstYearAssetDraw = Number(firstYearRow?.totalWithdrawals ?? 0);
+    const firstYearWithdrawalRate =
+      summary.totalAtRetirement > 0 ? firstYearAssetDraw / summary.totalAtRetirement : 0;
+    const firstYearFundingGap = Math.max(
+      0,
+      spendAtRetirementStart - retirementIncomeStreams,
+    );
+    const firstYearGapAmount = spendAtRetirementStart - retirementIncomeStreams;
+    const firstYearGapDisplay =
+      firstYearGapAmount > 0
+        ? `${formatCurrency(spendAtRetirementStart)} - ${formatCurrency(
+            retirementIncomeStreams,
+          )} = ${formatCurrency(firstYearGapAmount)} gap`
+        : firstYearGapAmount < 0
+          ? `${formatCurrency(spendAtRetirementStart)} - ${formatCurrency(
+              retirementIncomeStreams,
+            )} = ${formatCurrency(Math.abs(firstYearGapAmount))} surplus`
+          : `${formatCurrency(spendAtRetirementStart)} - ${formatCurrency(
+              retirementIncomeStreams,
+            )} = balanced`;
+    const accessYear = profile.retirementYear + yearsUntilRetirementAccountsAccessible;
+    const socialSecurityStartYear = incomeStreams
+      .filter(
+        (incomeStream) =>
+          !incomeStream.isDisabled && incomeStream.streamType === "social_security",
+      )
+      .map((incomeStream) => getIncomeStartYear(incomeStream, profile.birthDate))
+      .filter((year) => Number.isFinite(year))
+      .sort((left, right) => left - right)[0];
+    const gapToSocialSecurity =
+      Number.isFinite(socialSecurityStartYear) && socialSecurityStartYear > accessYear
+        ? selectedTimeTableRows
+            .filter((row) => row.year >= accessYear && row.year < socialSecurityStartYear)
+            .reduce((sum, row) => sum + Number(row.totalWithdrawals ?? 0), 0)
+        : 0;
+    const socialSecurityReferenceRow =
+      Number.isFinite(socialSecurityStartYear) && socialSecurityStartYear > accessYear
+        ? selectedTimeTableRows.find((row) => row.year === socialSecurityStartYear - 1)
+        : null;
+    const bridgeAssetsAtSocialSecurityAge = socialSecurityReferenceRow
+      ? sumAssetSnapshotBalances(
+          socialSecurityReferenceRow.assetSnapshots,
+          (asset) => !asset.isRetirementAsset,
+        )
+      : bridgeBalanceAtAccessAge;
+    const retirementAssetsAtSocialSecurityAge = socialSecurityReferenceRow
+      ? sumAssetSnapshotBalances(
+          socialSecurityReferenceRow.assetSnapshots,
+          (asset) => asset.isRetirementAsset,
+        )
+      : retirementAccountsAtAccessAge;
+    const totalAssetsAtSocialSecurityAge =
+      bridgeAssetsAtSocialSecurityAge + retirementAssetsAtSocialSecurityAge;
+    const hasSocialSecurityGap = gapToSocialSecurity > 0;
+    const simplePlanStatus = projectionLabelForPlan({
+      hasImmediateAccessToAllAssets: ageAtRetirement >= 59.5,
+      bridgeCoveredToAccessAge,
+      yearsUntilRetirementAccountsAccessible,
+      bridgeShortfall,
+    });
 
     return {
       yearsToRetirement,
@@ -1569,11 +1710,32 @@ export default function App() {
       selectedMarketReturn,
       selectedScenarioLabel: selectedScenario.label,
       incomeGapAtRetirementStart,
+      firstYearAssetDraw,
+      firstYearWithdrawalRate,
+      firstYearFundingGap,
+      firstYearGapAmount,
+      firstYearGapDisplay,
       bridgeAssetsAtRetirement,
+      bridgeSavingsAtRetirement,
+      bridgeTaxableAssetsAtRetirement,
+      retirementAccountsAtRetirement,
       yearsUntilRetirementAccountsAccessible,
       bridgeCoveredToAccessAge,
       bridgeShortfall,
+      bridgeSavingsAtAccessAge,
+      bridgeTaxableAssetsAtAccessAge,
+      retirementAccountsAtAccessAge,
       bridgeBalanceAtAccessAge,
+      totalAssetsAtAccessAge: bridgeBalanceAtAccessAge + retirementAccountsAtAccessAge,
+      socialSecurityStartYear: Number.isFinite(socialSecurityStartYear)
+        ? socialSecurityStartYear
+        : null,
+      gapToSocialSecurity,
+      hasSocialSecurityGap,
+      bridgeAssetsAtSocialSecurityAge,
+      retirementAssetsAtSocialSecurityAge,
+      totalAssetsAtSocialSecurityAge,
+      simplePlanStatus,
       chartSeries,
       timeTables,
       finalBalanceAtEndOfLife,
@@ -1593,6 +1755,7 @@ export default function App() {
     const yearsInRetirement = yearsBetween(profile.retirementYear, profile.retirementEndYear);
     const retirementDurationYears = Math.max(1, yearsInRetirement + 1);
     const ageAtRetirement = profile.currentAge + yearsToRetirement;
+    const hasImmediateAccessToAllAssets = ageAtRetirement >= 59.5;
     const desiredRetirementSpend = Number(targets.targetAnnualSpend);
     const inflationRate = Number(targets.inflationRate);
     const initialBuckets = getInitialRetirementBuckets(assets, yearsToRetirement);
@@ -1610,13 +1773,21 @@ export default function App() {
     const random = createSeededRandom(simulationSeed);
     const randomNormal = createNormalRandom(random);
     let successCount = 0;
+    let bridgeSuccessCount = 0;
     const endingBalances = [];
+    const bridgeFailureAges = [];
+    const bridgeFailureYears = [];
+    const bridgeAccessBalances = [];
+    const retirementAccessBalances = [];
+    const totalAccessBalances = [];
 
     for (let trial = 0; trial < monteCarloTrials; trial += 1) {
       let remainingSavings = initialBuckets.savings;
       let remainingAvailableMarket = initialBuckets.availableMarket;
       let remainingRetirementMarket = initialBuckets.retirementMarket;
       let succeeded = true;
+      let bridgeSucceeded = hasImmediateAccessToAllAssets;
+      let accessBalanceCaptured = hasImmediateAccessToAllAssets;
 
       for (let offset = 0; offset < retirementDurationYears; offset += 1) {
         const year = profile.retirementYear + offset;
@@ -1635,8 +1806,27 @@ export default function App() {
         const marketReturn = Math.max(-0.95, monteCarloMeanReturn + randomNormal() * monteCarloVolatility);
 
         remainingSavings *= 1 + initialBuckets.effectiveSavingsGrowthRate;
-        remainingAvailableMarket *= 1 + marketReturn;
-        remainingRetirementMarket *= 1 + marketReturn;
+        remainingAvailableMarket *=
+          1 +
+          Math.max(-0.99, marketReturn - initialBuckets.effectiveAvailableMarketFeeRate);
+        remainingRetirementMarket *=
+          1 +
+          Math.max(-0.99, marketReturn - initialBuckets.effectiveRetirementMarketFeeRate);
+
+        if (!accessBalanceCaptured && currentAgeInRetirement >= 59.5) {
+          bridgeAccessBalances.push(
+            Math.max(0, remainingSavings + remainingAvailableMarket),
+          );
+          retirementAccessBalances.push(Math.max(0, remainingRetirementMarket));
+          totalAccessBalances.push(
+            Math.max(
+              0,
+              remainingSavings + remainingAvailableMarket + remainingRetirementMarket,
+            ),
+          );
+          accessBalanceCaptured = true;
+          bridgeSucceeded = true;
+        }
 
         let withdrawalRemaining = yearlyWithdrawal;
         const withdrawalFromSavings = Math.min(remainingSavings, withdrawalRemaining);
@@ -1662,6 +1852,10 @@ export default function App() {
         }
 
         if (withdrawalRemaining > 0) {
+          if (!hasImmediateAccessToAllAssets && currentAgeInRetirement < 59.5) {
+            bridgeFailureAges.push(currentAgeInRetirement);
+            bridgeFailureYears.push(year);
+          }
           succeeded = false;
           break;
         }
@@ -1674,9 +1868,18 @@ export default function App() {
       if (succeeded) {
         successCount += 1;
       }
+
+      if (bridgeSucceeded) {
+        bridgeSuccessCount += 1;
+      }
     }
 
     const sortedEndingBalances = [...endingBalances].sort((left, right) => left - right);
+    const sortedBridgeAccessBalances = [...bridgeAccessBalances].sort((left, right) => left - right);
+    const sortedAccessBalances = [...retirementAccessBalances].sort((left, right) => left - right);
+    const sortedTotalAccessBalances = [...totalAccessBalances].sort((left, right) => left - right);
+    const sortedBridgeFailureAges = [...bridgeFailureAges].sort((left, right) => left - right);
+    const sortedBridgeFailureYears = [...bridgeFailureYears].sort((left, right) => left - right);
 
     return {
       trials: monteCarloTrials,
@@ -1684,6 +1887,14 @@ export default function App() {
       medianEndingBalance: percentile(sortedEndingBalances, 0.5),
       pessimisticEndingBalance: percentile(sortedEndingBalances, 0.1),
       optimisticEndingBalance: percentile(sortedEndingBalances, 0.9),
+      bridgeSuccessRate:
+        monteCarloTrials > 0 ? bridgeSuccessCount / monteCarloTrials : 0,
+      typicalBridgeFailureAge: percentile(sortedBridgeFailureAges, 0.5),
+      typicalBridgeFailureYear: percentile(sortedBridgeFailureYears, 0.5),
+      medianBridgeBalanceAtAccessAge: percentile(sortedBridgeAccessBalances, 0.5),
+      medianRetirementBalanceAtAccessAge: percentile(sortedAccessBalances, 0.5),
+      medianTotalBalanceAtAccessAge: percentile(sortedTotalAccessBalances, 0.5),
+      hasImmediateAccessToAllAssets,
     };
   }, [assets, incomeStreams, profile, targets]);
   const runwaySummary = useMemo(() => {
@@ -1725,36 +1936,40 @@ export default function App() {
     const bridgeSentence = projection.hasImmediateAccessToAllAssets
       ? "Because retirement starts after age 59.5, the full asset base is available immediately."
       : projection.bridgeCoveredToAccessAge
-        ? `Because retirement starts before age 59.5, the plan uses ${formatCurrency(
-            projection.bridgeAssetsAtRetirement,
-          )} of bridge assets to cover the first ${
+        ? `Because retirement starts before age 59.5, the plan bridges the first ${
             projection.yearsUntilRetirementAccountsAccessible
-          } years until retirement accounts open.`
+          } years with ${formatCurrency(
+            projection.bridgeSavingsAtRetirement,
+          )} in cash and savings plus ${formatCurrency(
+            projection.bridgeTaxableAssetsAtRetirement,
+          )} in taxable investments, while retirement accounts continue growing from ${formatCurrency(
+            projection.retirementAccountsAtRetirement,
+          )} to about ${formatCurrency(projection.retirementAccountsAtAccessAge)} by age 59.5.`
         : `Because retirement starts before age 59.5, the plan needs bridge assets first and is currently short ${formatCurrency(
             projection.bridgeShortfall,
           )} before retirement accounts become available.`;
     const shortfallSentence =
       totalShortfall > 0
-        ? ` In the selected scenario, the model still runs short by ${formatCurrency(totalShortfall)} over the full horizon.`
+        ? ` The selected scenario still runs short by ${formatCurrency(totalShortfall)} over the full horizon.`
         : "";
     const laterIncomeSentence =
       futureIncomeStarts.length > 0
         ? ` Later in retirement, ${futureIncomeStarts.join("; ")}.`
         : "";
 
-    return `With ${formatCurrency(
+    return `In the selected ${projection.selectedScenarioLabel.toLowerCase()} scenario, the plan reaches retirement with ${formatCurrency(
       projection.totalAtRetirement,
-    )} projected at retirement, a first-year retirement spend target of ${formatCurrency(
-      projection.targetAnnualSpend,
-    )}, and ${formatCurrency(
+    )} of investable assets, ${formatCurrency(
       projection.retirementIncomeStreams,
-    )} of income active at retirement start, the first retirement year would draw about ${formatCurrency(
+    )} of recurring income, and a first-year funding gap of ${formatCurrency(
+      projection.firstYearFundingGap,
+    )}. That means about ${formatCurrency(
       firstYearRow?.totalWithdrawals ?? 0,
-    )} from assets. Over the full ${projection.yearsInRetirement}-year retirement horizon, this plan would draw about ${formatCurrency(
+    )} comes from the portfolio in year one, a ${formatPercent(
+      projection.firstYearWithdrawalRate,
+    )} withdrawal rate. The plan draws about ${formatCurrency(
       totalWithdrawals,
-    )} from assets in the selected ${
-      projection.selectedScenarioLabel
-    } scenario.${laterIncomeSentence} ${bridgeSentence}${shortfallSentence} The Monte Carlo success rate is ${formatPercent(
+    )} from investable assets over the full ${projection.yearsInRetirement}-year retirement horizon.${laterIncomeSentence} ${bridgeSentence}${shortfallSentence} Monte Carlo success is ${formatPercent(
       monteCarlo.successRate,
     )}.`;
   }, [incomeStreams, monteCarlo.successRate, profile.birthDate, profile.retirementEndYear, profile.retirementYear, projection, runwayTimeTable.rows]);
@@ -1994,7 +2209,12 @@ export default function App() {
   }
 
   function addIncomeStream() {
+    if (!newIncomeStreamType) {
+      return;
+    }
+
     setIncomeStreams((current) => [...current, buildIncomeStream(newIncomeStreamType)]);
+    setNewIncomeStreamType("");
     setIncomeStatus("");
   }
 
@@ -2213,6 +2433,53 @@ export default function App() {
             value={formatCurrency(monteCarlo.optimisticEndingBalance)}
             tone="positive"
           />
+          {!monteCarlo.hasImmediateAccessToAllAssets ? (
+            <>
+              <ProjectionCard
+                label="Bridge reaches age 59.5"
+                value={formatPercent(monteCarlo.bridgeSuccessRate)}
+                tone={monteCarlo.bridgeSuccessRate >= 0.8 ? "positive" : "negative"}
+              />
+              <ProjectionCard
+                label="Typical bridge failure point"
+                value={
+                  monteCarlo.typicalBridgeFailureYear > 0
+                    ? `Age ${Math.round(monteCarlo.typicalBridgeFailureAge)} (${Math.round(
+                        monteCarlo.typicalBridgeFailureYear,
+                      )})`
+                    : "Usually lasts to 59.5"
+                }
+                tone={
+                  monteCarlo.typicalBridgeFailureYear > 0 ? "negative" : "positive"
+                }
+              />
+              <ProjectionCard
+                label="Median bridge assets at 59.5"
+                value={
+                  monteCarlo.medianBridgeBalanceAtAccessAge > 0
+                    ? formatCurrency(monteCarlo.medianBridgeBalanceAtAccessAge)
+                    : "Not reached in simulation"
+                }
+              />
+              <ProjectionCard
+                label="Median retirement accounts at 59.5"
+                value={
+                  monteCarlo.medianRetirementBalanceAtAccessAge > 0
+                    ? formatCurrency(monteCarlo.medianRetirementBalanceAtAccessAge)
+                    : "Not reached in simulation"
+                }
+              />
+              <ProjectionCard
+                label="Median total investable assets at 59.5"
+                value={
+                  monteCarlo.medianTotalBalanceAtAccessAge > 0
+                    ? formatCurrency(monteCarlo.medianTotalBalanceAtAccessAge)
+                    : "Not reached in simulation"
+                }
+                tone="highlight"
+              />
+            </>
+          ) : null}
         </div>
       </section>
 
@@ -2397,7 +2664,10 @@ export default function App() {
                 name="newIncomeStreamType"
                 value={newIncomeStreamType}
                 onChange={(event) => setNewIncomeStreamType(event.target.value)}
-                options={incomeStreamTypeOptions}
+                options={[
+                  { value: "", label: "-- Select Income Type --" },
+                  ...incomeStreamTypeOptions,
+                ]}
               />
               <button type="button" className="button" onClick={addIncomeStream}>
                 Add Income Stream
@@ -2427,12 +2697,16 @@ export default function App() {
         <aside className="dashboard-side">
           <section className="panel panel--accent">
             <p className="section-kicker">Projection</p>
-            <h2>Retirement runway</h2>
+            <h2>Retirement snapshot</h2>
             <p className="projection-copy">
-              Assumes savings grow at the entered APR and market-linked assets compound at
-              the selected market return of {projection.selectedMarketReturn}% minus the fees
-              you entered. Retirement spending starts at your entered first-year retirement
-              amount and inflates at {projection.inflationRate}% per year after retirement begins.
+              This view keeps the math focused on a few core questions: how much investable
+              money you will have, how much recurring income arrives each year, and how much
+              the portfolio needs to cover.
+            </p>
+            <p className="projection-copy">
+              Assets entered above are treated as investable assets. Rental property value or
+              a primary residence can stay out of this section if you only want to model their
+              income separately.
             </p>
             <p className="projection-copy">{runwaySummary}</p>
 
@@ -2443,74 +2717,73 @@ export default function App() {
 
             <div className="projection-grid">
               <ProjectionCard
-                label="Current assets"
+                label="Total investable assets today"
                 value={formatCurrency(projection.currentAssets)}
               />
               <ProjectionCard
-                label="Years until retirement"
-                value={`${projection.yearsToRetirement} years`}
-              />
-              <ProjectionCard
-                label="Retirement duration"
-                value={`${projection.yearsInRetirement} years`}
-              />
-              <ProjectionCard
-                label="Projected at retirement"
-                value={formatCurrency(projection.totalAtRetirement)}
-                tone="highlight"
-              />
-              <ProjectionCard
-                label="Target spend in first retirement year"
+                label="Annual spending target"
                 value={formatCurrency(projection.spendAtRetirementStart)}
               />
               <ProjectionCard
-                label="Income active at retirement start"
+                label="Recurring income at retirement"
                 value={formatCurrency(projection.retirementIncomeStreams)}
               />
               <ProjectionCard
-                label={
-                  projection.incomeGapAtRetirementStart >= 0
-                    ? "Income surplus in retirement"
-                    : "Income shortage in retirement"
+                label="Needed from portfolio in year 1"
+                value={projection.firstYearGapDisplay}
+                tone={projection.firstYearGapAmount <= 0 ? "positive" : "negative"}
+              />
+              <ProjectionCard
+                label="Bridge assets to cover until 59.5"
+                value={projection.bridgeCoveredToAccessAge ? "Yes" : "No"}
+                tone={
+                  projection.bridgeCoveredToAccessAge ? "positive" : "negative"
                 }
-                value={formatSignedCurrency(projection.incomeGapAtRetirementStart)}
-                tone={projection.incomeGapAtRetirementStart >= 0 ? "positive" : "negative"}
               />
-              {projection.hasImmediateAccessToAllAssets ? (
-                <ProjectionCard
-                  label="All-assets 4% capacity"
-                  value={formatCurrency(projection.sustainableAnnualSpend)}
-                  tone="highlight"
-                />
-              ) : (
-                <>
-                  <ProjectionCard
-                    label="Available bridge assets at retirement"
-                    value={formatCurrency(projection.bridgeAssetsAtRetirement)}
-                  />
-                  <ProjectionCard
-                    label="Bridge coverage to age 59.5"
-                    value={
-                      projection.bridgeCoveredToAccessAge
-                        ? `Covered (${projection.yearsUntilRetirementAccountsAccessible} yrs)`
-                        : `Short ${formatCurrency(projection.bridgeShortfall)}`
-                    }
-                    tone={projection.bridgeCoveredToAccessAge ? "positive" : "negative"}
-                  />
-                  <ProjectionCard
-                    label="Bridge balance at age 59.5"
-                    value={formatCurrency(projection.bridgeBalanceAtAccessAge)}
-                    tone={projection.bridgeCoveredToAccessAge ? "positive" : "negative"}
-                  />
-                </>
-              )}
               <ProjectionCard
-                label="Final balance at end of life"
+                label="Total bridge assets available at retirement"
+                value={formatCurrency(projection.bridgeAssetsAtRetirement)}
+              />
+              <ProjectionCard
+                label="Remaining bridge assets at 59.5"
+                value={formatCurrency(projection.bridgeBalanceAtAccessAge)}
+                tone={projection.bridgeCoveredToAccessAge ? "positive" : "negative"}
+              />
+              <ProjectionCard
+                label="Total assets (bridge + retirement) at 59.5"
+                value={formatCurrency(projection.totalAssetsAtAccessAge)}
+                tone="highlight"
+              />
+              <ProjectionCard
+                label="Remaining gap from 59.5 to SSA age"
+                value={
+                  projection.socialSecurityStartYear
+                    ? projection.hasSocialSecurityGap
+                      ? formatCurrency(projection.gapToSocialSecurity)
+                      : "None"
+                    : "No Social Security income set"
+                }
+                tone={projection.hasSocialSecurityGap ? "negative" : "positive"}
+              />
+              <ProjectionCard
+                label={
+                  projection.socialSecurityStartYear
+                    ? `Total assets remaining at SSA age (${projection.socialSecurityStartYear})`
+                    : "Total assets remaining at SSA age"
+                }
+                value={
+                  projection.socialSecurityStartYear
+                    ? `Bridge ${formatCurrency(
+                        projection.bridgeAssetsAtSocialSecurityAge,
+                      )} + Retirement ${formatCurrency(
+                        projection.retirementAssetsAtSocialSecurityAge,
+                      )} = ${formatCurrency(projection.totalAssetsAtSocialSecurityAge)}`
+                    : "No Social Security income set"
+                }
+              />
+              <ProjectionCard
+                label="Ending balance at end of life"
                 value={formatCurrency(projection.finalBalanceAtEndOfLife)}
-              />
-              <ProjectionCard
-                label="Inflation assumption"
-                value={formatPercent(projection.inflationRate / 100)}
               />
             </div>
           </section>
