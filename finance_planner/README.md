@@ -43,6 +43,9 @@ The app supports either a full `DATABASE_URL` or the individual PostgreSQL varia
 - `PGDATABASE`
 - `DATABASE_SSL`
 - `PORT` for the backend server, default `3001`
+- `AUTH_DEBUG_CODES` to expose one-time codes in local development
+- `RESEND_API_KEY` for production email delivery
+- `AUTH_EMAIL_FROM` for the verified sender address used in authentication emails
 
 ## Database setup
 
@@ -89,7 +92,16 @@ The app now uses multi-user email-code authentication.
 - Sign in with a one-time verification code
 - In local development, the verification code is exposed in the UI and logged by the backend for testing
 
-For production deployment, replace the local debug-code behavior with a real email delivery provider.
+## Production email authentication
+
+For public deployment, configure a real email sender.
+
+- `RESEND_API_KEY`: API key from Resend
+- `AUTH_EMAIL_FROM`: verified sender address, for example `Finance Planner <onboarding@your-domain.com>`
+- `AUTH_DEBUG_CODES=false`
+- `NODE_ENV=production`
+
+If production email is not configured, the backend now rejects sign-in requests instead of pretending an email was sent.
 
 ## Start services individually
 

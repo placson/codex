@@ -2410,7 +2410,7 @@ export default function App() {
       }
 
       setAuthStep("verify");
-      setAuthStatus("Verification code sent. Enter it to continue.");
+      setAuthStatus(payload.message ?? "Verification code sent. Enter it to continue.");
       setDebugCode(payload.debugCode ?? "");
     } catch (authRequestError) {
       setAuthStatus("");

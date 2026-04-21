@@ -20,6 +20,8 @@ const sessionLifetimeDays = 30;
 const secureCookies = process.env.NODE_ENV === "production";
 const exposeDebugCodes =
   process.env.AUTH_DEBUG_CODES === "true" || process.env.NODE_ENV !== "production";
+const resendApiKey = String(process.env.RESEND_API_KEY ?? "").trim();
+const authEmailFrom = String(process.env.AUTH_EMAIL_FROM ?? "").trim();
 
 const profileFields = [
   "full_name",
@@ -94,6 +96,70 @@ function createVerificationCode() {
 
 function createSessionToken() {
   return crypto.randomBytes(32).toString("base64url");
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function canSendAuthEmails() {
+  return Boolean(resendApiKey && authEmailFrom);
+}
+
+async function sendVerificationCodeEmail({ email, firstName, code }) {
+  if (!canSendAuthEmails()) {
+    throw new Error(
+      "Email verification is not configured. Set RESEND_API_KEY and AUTH_EMAIL_FROM.",
+    );
+  }
+
+  const safeName = escapeHtml(firstName || "there");
+  const safeCode = escapeHtml(code);
+  const safeLifetimeMinutes = escapeHtml(authCodeLifetimeMinutes);
+  const response = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${resendApiKey}`,
+      "Content-Type": "application/json",
+      "User-Agent": "finance-planner/1.0",
+    },
+    body: JSON.stringify({
+      from: authEmailFrom,
+      to: [email],
+      subject: "Your Finance Planner verification code",
+      html: `
+        <div style="font-family:Arial,sans-serif;line-height:1.5;color:#1f2933">
+          <p>Hello ${safeName},</p>
+          <p>Use this verification code to access your Finance Planner account:</p>
+          <p style="font-size:28px;font-weight:700;letter-spacing:6px;margin:24px 0;">${safeCode}</p>
+          <p>This code expires in ${safeLifetimeMinutes} minutes.</p>
+          <p>If you did not request this code, you can ignore this email.</p>
+        </div>
+      `,
+      text: `Hello ${firstName || "there"},\n\nYour Finance Planner verification code is ${code}.\n\nThis code expires in ${authCodeLifetimeMinutes} minutes.\n\nIf you did not request this code, you can ignore this email.`,
+      tags: [{ name: "category", value: "confirm_email" }],
+    }),
+  });
+
+  if (!response.ok) {
+    let message = `Email provider error (${response.status})`;
+
+    try {
+      const payload = await response.json();
+      if (payload?.message) {
+        message = payload.message;
+      }
+    } catch {
+      // Keep the generic message when the provider response is not JSON.
+    }
+
+    throw new Error(message);
+  }
 }
 
 function parseCookies(cookieHeader) {
@@ -662,10 +728,13 @@ app.get("/api/auth/session", async (request, response) => {
 
 app.post("/api/auth/request-code", async (request, response) => {
   const client = await pool.connect();
+  let userId = null;
+  let transactionOpen = false;
 
   try {
     const { mode, firstName, lastName, email } = sanitizeAuthRequest(request.body ?? {});
     await client.query("BEGIN");
+    transactionOpen = true;
 
     const { rows: existingUserRows } = await client.query(
       "SELECT * FROM users WHERE email = $1 LIMIT 1",
@@ -708,6 +777,8 @@ app.post("/api/auth/request-code", async (request, response) => {
       }
     }
 
+    userId = user.id;
+
     await client.query(
       "DELETE FROM auth_verification_codes WHERE user_id = $1 AND consumed_at IS NULL",
       [user.id],
@@ -723,15 +794,43 @@ app.post("/api/auth/request-code", async (request, response) => {
     );
 
     await client.query("COMMIT");
+    transactionOpen = false;
 
-    console.log(`[auth] Verification code for ${email}: ${code}`);
+    if (canSendAuthEmails()) {
+      await sendVerificationCodeEmail({
+        email,
+        firstName: user.first_name ?? firstName,
+        code,
+      });
+    } else if (!exposeDebugCodes) {
+      await pool.query(
+        "DELETE FROM auth_verification_codes WHERE user_id = $1 AND consumed_at IS NULL",
+        [user.id],
+      );
+      throw new Error(
+        "Email delivery is not configured. Set RESEND_API_KEY and AUTH_EMAIL_FROM before enabling production sign-in.",
+      );
+    } else {
+      console.log(`[auth] Verification code for ${email}: ${code}`);
+    }
+
     response.json({
       ok: true,
       debugCode: exposeDebugCodes ? code : undefined,
-      message: "Verification code sent.",
+      message: canSendAuthEmails()
+        ? "Verification code sent to your email."
+        : "Verification code generated for local development.",
     });
   } catch (error) {
-    await client.query("ROLLBACK");
+    if (transactionOpen) {
+      await client.query("ROLLBACK");
+    }
+    if (userId != null) {
+      await pool.query(
+        "DELETE FROM auth_verification_codes WHERE user_id = $1 AND consumed_at IS NULL",
+        [userId],
+      );
+    }
     response.status(400).json({ error: error.message });
   } finally {
     client.release();
