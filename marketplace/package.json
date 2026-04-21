@@ -1,0 +1,32 @@
+{
+  "name": "oracle-marketplace",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "dev:server": "node --watch server/index.js",
+    "dev:all": "npm run opensearch:up && concurrently -k \"npm:dev:server\" \"npm run dev -- --host 0.0.0.0\"",
+    "build": "vite build",
+    "start": "node server/index.js",
+    "opensearch:up": "docker compose up -d opensearch dashboards",
+    "opensearch:down": "docker compose down",
+    "index:create": "node scripts/create-index.js",
+    "import:listings": "node scripts/import-listings.js",
+    "enrich:listings": "node scripts/enrich-listings.js",
+    "rebuild:all": "npm run opensearch:up && npm run import:listings -- public-marketplace-listings.json --replace && npm run enrich:listings -- --replace"
+  },
+  "dependencies": {
+    "@opensearch-project/opensearch": "^2.8.0",
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "oci-sdk": "^2.129.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.1",
+    "concurrently": "^9.0.1",
+    "vite": "^5.4.10"
+  }
+}
