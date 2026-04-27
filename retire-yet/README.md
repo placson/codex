@@ -561,6 +561,77 @@ The API is already structured around `userId`, which makes it easier to add auth
 Frontend runs on `http://localhost:5173`.
 Backend runs on `http://localhost:3001`.
 
+## Starting And Shutting Down
+
+### Fastest Startup
+
+If dependencies and `.env` files are already in place, this is the shortest path:
+
+1. Start Postgres:
+
+   ```bash
+   npm run db:start
+   ```
+
+2. Start the frontend and backend together:
+
+   ```bash
+   npm run dev
+   ```
+
+3. Open the app:
+
+   ```text
+   http://localhost:5173
+   ```
+
+The API will be available at `http://localhost:3001`.
+
+### Start Only One Part
+
+If you only want one side running:
+
+- frontend only:
+
+  ```bash
+  npm run dev:client
+  ```
+
+- backend only:
+
+  ```bash
+  npm run dev:server
+  ```
+
+### Shutdown
+
+To fully stop the app locally:
+
+1. Stop the dev servers started by `npm run dev`, `npm run dev:client`, or `npm run dev:server`
+   by pressing `Ctrl+C` in the terminal where they are running.
+
+2. Stop the local Postgres container:
+
+   ```bash
+   npm run db:stop
+   ```
+
+### Typical Local Session
+
+Start:
+
+```bash
+npm run db:start
+npm run dev
+```
+
+Stop:
+
+```bash
+# press Ctrl+C to stop the dev server(s)
+npm run db:stop
+```
+
 ## Local Multi-User Testing
 
 The sidebar includes a `Planner ID` field.
