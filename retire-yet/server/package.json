@@ -1,0 +1,21 @@
+{
+  "name": "retire-yet-server",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "nodemon src/index.js",
+    "start": "node src/index.js",
+    "migrate:json-to-postgres": "node scripts/migrate-json-to-postgres.js",
+    "cleanup:current-salary": "node scripts/remove-legacy-current-salary.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^17.4.2",
+    "express": "^4.21.1",
+    "pg": "^8.20.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.7"
+  }
+}
