@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Clarity Path favicon">
+  <defs>
+    <linearGradient id="clarityPathBg" x1="8" y1="8" x2="56" y2="56" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#173042" />
+      <stop offset="1" stop-color="#4d8f7a" />
+    </linearGradient>
+    <linearGradient id="clarityPathTrail" x1="16" y1="42" x2="44" y2="18" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#f3efe3" />
+      <stop offset="1" stop-color="#ffffff" />
+    </linearGradient>
+  </defs>
+  <rect x="4" y="4" width="56" height="56" rx="16" fill="url(#clarityPathBg)" />
+  <path
+    d="M18 45c6-1 11-4 15-9 4-5 8-11 13-15"
+    fill="none"
+    stroke="url(#clarityPathTrail)"
+    stroke-linecap="round"
+    stroke-width="5"
+  />
+  <circle cx="19" cy="45" r="4.5" fill="#f3efe3" />
+  <circle cx="47" cy="19" r="5.5" fill="#ffffff" />
+  <path
+    d="M47 12.5l1.8 4.7 4.7 1.8-4.7 1.8-1.8 4.7-1.8-4.7-4.7-1.8 4.7-1.8z"
+    fill="#d8b36a"
+    opacity="0.95"
+  />
+</svg>
