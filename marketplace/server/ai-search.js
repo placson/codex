@@ -819,7 +819,6 @@ function buildSemanticQueryText(query, signals) {
     signals.listingTypeIntent.priorityTypes.join(" "),
   ].filter(Boolean).join("\n");
 }
-
 async function searchListingsSource({ name, body }) {
   const result = unwrap(
     await client.search({
@@ -1030,7 +1029,6 @@ async function applyVectorSignals(hits, { query, signals }) {
     throw error;
   }
 }
-
 function listingTypePriorityRank(signals, listingType) {
   const normalizedType = String(listingType || "").trim().toUpperCase();
   const priorityIndex = signals.listingTypeIntent.priorityTypes.indexOf(normalizedType);
@@ -1078,7 +1076,6 @@ function rerankAiResults(hits, signals, taxonomyLookup) {
       rerankScore += 18 + ((hit.sourceSignals.vector.score || 0) * 110);
       reasons.push("Matched semantic vector similarity across listing and resource context.");
     }
-
     if (hit.sourceSignals?.connectionText) {
       rerankScore += 30;
       reasons.push("Matched the requested connection target directly in the listing description.");
@@ -1569,6 +1566,7 @@ export async function aiSearchListings({ q = "", filters = {}, limit = 6 }) {
     searchResults.push(connectionFallbackResult);
   }
 
+  const mergedHits = await applyVectorSignals(mergeCandidateHits(searchResults), { query, signals });
   const mergedHits = await applyVectorSignals(mergeCandidateHits(searchResults), { query, signals });
   const reranked = rerankAiResults(mergedHits, signals, buildTaxonomyLookup(taxonomyProducts));
   const suggestions = reranked.slice(0, limit);

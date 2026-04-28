@@ -1,0 +1,138 @@
+{
+  "schemaVersion": "2.0.0",
+  "users": {
+    "demo-user": {
+      "userId": "demo-user",
+      "schemaVersion": "1.0.0",
+      "personal": {
+        "currentAge": 49,
+        "retirementAge": 60,
+        "lifeExpectancy": 92
+      },
+      "income": {
+        "careerPhases": [
+          {
+            "startAge": 49,
+            "endAge": 52,
+            "baseSalary": 158000,
+            "housingAllowance": 0,
+            "housingAllowanceTaxExemptPercent": 1,
+            "retirementContributionPercent": 24.6,
+            "employerMatch": 3,
+            "title": "tech job"
+          },
+          {
+            "startAge": 52,
+            "endAge": 60,
+            "baseSalary": 120000,
+            "housingAllowance": 50,
+            "housingAllowanceTaxExemptPercent": 1,
+            "retirementContributionPercent": 0,
+            "employerMatch": 0,
+            "title": "pastor job"
+          }
+        ],
+        "otherIncomeStreams": []
+      },
+      "assets": {
+        "cash": 540000,
+        "brokerage": 844000,
+        "retirementAccounts": {
+          "401k": 892000,
+          "ira": 295000,
+          "rothIra": 0
+        }
+      },
+      "realEstate": {
+        "properties": [
+          {
+            "propertyId": "property-1",
+            "purchasePrice": 425000,
+            "purchaseAge": 30,
+            "sellAge": 51,
+            "appreciationRate": 0.03,
+            "expectedSalePrice": 550000,
+            "sellingCostsPercent": 0.06,
+            "proceedsDestination": "cash",
+            "mortgage": {
+              "rate": 0.0412,
+              "term": 30,
+              "remainingBalance": 277000
+            },
+            "purchaseYear": 2007,
+            "purchaseMonth": 4,
+            "sellYear": 2026,
+            "sellMonth": 9,
+            "downPayment": 0,
+            "name": "sac house"
+          },
+          {
+            "propertyId": "property-2",
+            "purchasePrice": 165000,
+            "purchaseAge": 23,
+            "sellAge": 49,
+            "appreciationRate": 0.03,
+            "expectedSalePrice": 700000,
+            "sellingCostsPercent": 0.06,
+            "proceedsDestination": "cash",
+            "mortgage": {
+              "rate": 0,
+              "term": 30,
+              "remainingBalance": 0
+            },
+            "purchaseYear": 2000,
+            "purchaseMonth": 4,
+            "sellYear": 2026,
+            "sellMonth": 6,
+            "downPayment": 0,
+            "name": "condo rental"
+          }
+        ],
+        "rentals": [
+          {
+            "name": "sonoma rental",
+            "rentalId": "rental-1",
+            "monthlyRent": 5000,
+            "startYear": 2026,
+            "startMonth": 9,
+            "endYear": null,
+            "endMonth": 4
+          }
+        ]
+      },
+      "expenses": {
+        "current": {
+          "food": 2000,
+          "entertainment": 200,
+          "transportation": 300,
+          "insurance": 300,
+          "subscriptions": 200,
+          "healthcare": 0,
+          "other": 200
+        },
+        "retirement": {
+          "food": 2000,
+          "entertainment": 100,
+          "transportation": 300,
+          "insurance": 300,
+          "subscriptions": 80,
+          "healthcare": 0,
+          "other": 500
+        },
+        "monthlyExpenses": 3200,
+        "expectedRetirementExpenses": 3280
+      },
+      "retirement": {
+        "socialSecurityAge": 67,
+        "socialSecurityBenefit": 6307,
+        "pensionIncome": 0
+      },
+      "assumptions": {
+        "inflationRate": 0.025,
+        "investmentReturnMean": 0.05,
+        "investmentReturnStdDev": 0.12,
+        "safeWithdrawalRate": 0.04
+      }
+    }
+  }
+}

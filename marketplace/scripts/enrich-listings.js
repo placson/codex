@@ -122,7 +122,6 @@ async function applyEmbeddings(records, batchSize = 32) {
     console.log(`Embedded ${Math.min(start + batch.length, records.length)} / ${records.length} enrichment records...`);
   }
 }
-
 async function run() {
   const { replace } = parseArgs(process.argv.slice(2));
   const taxonomyProducts = await getProductTaxonomy();

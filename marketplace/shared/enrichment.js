@@ -1,5 +1,4 @@
 import { embedTextDeterministic } from "./vector.js";
-
 function normalizeText(value) {
   return String(value || "")
     .toLowerCase()
@@ -30,7 +29,6 @@ function plainText(value) {
     .replace(/\s+/g, " ")
     .trim();
 }
-
 function buildProductCandidates(product) {
   return uniq([
     product.id,
@@ -257,6 +255,7 @@ async function buildResourceFetchTexts(attachments = [], options = {}) {
   return uniq(resourceText);
 }
 
+export function buildListingEnrichmentIndexDefinition() {
 export function buildListingEnrichmentIndexDefinition({ embeddingDimension = 256 } = {}) {
   return {
     settings: {
@@ -382,7 +381,6 @@ export async function deriveListingEnrichment(listing, taxonomyProducts = [], op
       ...attachmentDescriptors.resourceHosts,
     ].filter(Boolean).join("\n"),
   ].filter(Boolean).join("\n");
-
   return {
     id: listing.id,
     listingId: listing.id,
@@ -426,6 +424,18 @@ export async function deriveListingEnrichment(listing, taxonomyProducts = [], op
       ...(listing.industries || []),
       ...(listing.capabilities || []),
       ...(listing.tags || []),
+      ...attachmentDescriptors.resourceNames,
+      ...attachmentDescriptors.resourceKinds,
+      ...attachmentDescriptors.resourceHosts,
+      ...attachmentDescriptors.resourceMetadata,
+      ...fetchedResourceText,
+    ].filter(Boolean).join("\n"),
+    semanticText,
+    semanticEmbedding: options.includeEmbedding === false
+      ? undefined
+      : embedTextDeterministic(semanticText, {
+          dimension: options.embeddingDimension || 256,
+        }),
       ...attachmentDescriptors.resourceNames,
       ...attachmentDescriptors.resourceKinds,
       ...attachmentDescriptors.resourceHosts,
