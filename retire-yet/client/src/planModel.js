@@ -1,5 +1,7 @@
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3001/api';
 export const DEFAULT_USER_ID = import.meta.env.VITE_DEFAULT_USER_ID || 'demo-user';
+export const FRONTEND_VERSION = 'ui-2026-04-28-b';
+export const FRONTEND_STORAGE_VERSION = '2';
 
 export function getUserApiUrl(userId = DEFAULT_USER_ID) {
   return `${API_BASE_URL}/users/${encodeURIComponent(userId)}`;

@@ -5,133 +5,165 @@
       "userId": "demo-user",
       "schemaVersion": "1.0.0",
       "personal": {
-        "currentAge": 49,
-        "retirementAge": 60,
+        "currentAge": 45,
+        "retirementAge": 62,
         "lifeExpectancy": 92
       },
       "income": {
         "careerPhases": [
           {
-            "startAge": 49,
+            "startAge": 45,
             "endAge": 52,
-            "baseSalary": 158000,
+            "baseSalary": 210000,
             "housingAllowance": 0,
             "housingAllowanceTaxExemptPercent": 1,
-            "retirementContributionPercent": 24.6,
-            "employerMatch": 3,
-            "title": "tech job"
+            "retirementContributionPercent": 12,
+            "employerMatch": 5,
+            "title": "VP of Operations",
+            "compensationType": "standard"
           },
           {
-            "startAge": 52,
-            "endAge": 60,
-            "baseSalary": 120000,
-            "housingAllowance": 50,
+            "startAge": 53,
+            "endAge": 61,
+            "baseSalary": 145000,
+            "housingAllowance": 0,
             "housingAllowanceTaxExemptPercent": 1,
             "retirementContributionPercent": 0,
             "employerMatch": 0,
-            "title": "pastor job"
+            "title": "Advisory + board work",
+            "compensationType": "standard"
           }
         ],
-        "otherIncomeStreams": []
+        "otherIncomeStreams": [
+          {
+            "name": "Austin duplex net rent",
+            "incomeType": "rental",
+            "annualAmount": 24000,
+            "startAge": 45,
+            "endAge": 67,
+            "taxablePercent": 1
+          }
+        ]
       },
       "assets": {
-        "cash": 540000,
-        "brokerage": 844000,
+        "cash": 165000,
+        "brokerage": 285000,
         "retirementAccounts": {
-          "401k": 892000,
-          "ira": 295000,
-          "rothIra": 0
+          "401k": 640000,
+          "ira": 185000,
+          "rothIra": 72000
         }
       },
       "realEstate": {
         "properties": [
           {
             "propertyId": "property-1",
-            "purchasePrice": 425000,
-            "purchaseAge": 30,
-            "sellAge": 51,
+            "isPaidOff": false,
+            "currentValue": 980000,
+            "purchasePrice": 820000,
+            "downPayment": 164000,
+            "purchaseAge": 37,
+            "purchaseYear": 2018,
+            "purchaseMonth": 6,
+            "sellAge": 60,
+            "sellYear": 2041,
+            "sellMonth": 6,
             "appreciationRate": 0.03,
-            "expectedSalePrice": 550000,
+            "expectedSalePrice": 1425000,
             "sellingCostsPercent": 0.06,
             "proceedsDestination": "cash",
+            "monthlyMortgagePayment": 2875,
+            "monthlyTaxAndInsurance": 1580,
             "mortgage": {
-              "rate": 0.0412,
+              "rate": 0.0425,
               "term": 30,
-              "remainingBalance": 277000
+              "remainingBalance": 392000
             },
-            "purchaseYear": 2007,
-            "purchaseMonth": 4,
-            "sellYear": 2026,
-            "sellMonth": 9,
-            "downPayment": 0,
-            "name": "sac house"
+            "name": "Primary residence"
           },
           {
             "propertyId": "property-2",
-            "purchasePrice": 165000,
-            "purchaseAge": 23,
-            "sellAge": 49,
+            "isPaidOff": true,
+            "currentValue": 460000,
+            "purchasePrice": 315000,
+            "downPayment": 315000,
+            "purchaseAge": 34,
+            "purchaseYear": 2015,
+            "purchaseMonth": 9,
             "appreciationRate": 0.03,
-            "expectedSalePrice": 700000,
+            "expectedSalePrice": null,
             "sellingCostsPercent": 0.06,
             "proceedsDestination": "cash",
+            "monthlyMortgagePayment": 0,
+            "monthlyTaxAndInsurance": 425,
             "mortgage": {
               "rate": 0,
               "term": 30,
               "remainingBalance": 0
             },
-            "purchaseYear": 2000,
-            "purchaseMonth": 4,
-            "sellYear": 2026,
-            "sellMonth": 6,
-            "downPayment": 0,
-            "name": "condo rental"
+            "name": "Austin duplex rental"
+          },
+          {
+            "propertyId": "property-3",
+            "isPaidOff": false,
+            "currentValue": 0,
+            "purchasePrice": 760000,
+            "downPayment": 300000,
+            "purchaseAge": 60,
+            "purchaseYear": 2041,
+            "purchaseMonth": 8,
+            "sellAge": null,
+            "sellYear": null,
+            "sellMonth": 8,
+            "appreciationRate": 0.025,
+            "expectedSalePrice": null,
+            "sellingCostsPercent": 0.06,
+            "proceedsDestination": "cash",
+            "monthlyMortgagePayment": 2540,
+            "monthlyTaxAndInsurance": 820,
+            "mortgage": {
+              "rate": 0.055,
+              "term": 30,
+              "remainingBalance": 460000
+            },
+            "name": "Retirement cottage"
           }
         ],
-        "rentals": [
-          {
-            "name": "sonoma rental",
-            "rentalId": "rental-1",
-            "monthlyRent": 5000,
-            "startYear": 2026,
-            "startMonth": 9,
-            "endYear": null,
-            "endMonth": 4
-          }
-        ]
+        "rentals": []
       },
       "expenses": {
         "current": {
-          "food": 2000,
-          "entertainment": 200,
-          "transportation": 300,
-          "insurance": 300,
-          "subscriptions": 200,
-          "healthcare": 0,
-          "other": 200
+          "food": 1450,
+          "entertainment": 550,
+          "transportation": 650,
+          "insurance": 550,
+          "subscriptions": 180,
+          "healthcare": 350,
+          "other": 2200
         },
         "retirement": {
-          "food": 2000,
-          "entertainment": 100,
-          "transportation": 300,
-          "insurance": 300,
-          "subscriptions": 80,
-          "healthcare": 0,
-          "other": 500
+          "food": 1200,
+          "entertainment": 400,
+          "transportation": 450,
+          "insurance": 480,
+          "subscriptions": 120,
+          "healthcare": 650,
+          "other": 1800
         },
-        "monthlyExpenses": 3200,
-        "expectedRetirementExpenses": 3280
+        "monthlyExpenses": 5930,
+        "expectedRetirementExpenses": 5100
       },
       "retirement": {
         "socialSecurityAge": 67,
-        "socialSecurityBenefit": 6307,
+        "socialSecurityBenefit": 3800,
         "pensionIncome": 0
       },
       "assumptions": {
         "inflationRate": 0.025,
-        "investmentReturnMean": 0.05,
+        "investmentReturnMean": 0.065,
         "investmentReturnStdDev": 0.12,
-        "safeWithdrawalRate": 0.04
+        "safeWithdrawalRate": 0.04,
+        "cashYield": 0.032
       }
     }
   }

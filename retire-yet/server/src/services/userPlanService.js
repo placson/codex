@@ -29,6 +29,15 @@ const EXPENSE_CATEGORY_KEYS = [
 ];
 const DEFAULT_CASH_YIELD = 0.032;
 
+function assertWritableUserId(userId) {
+  if (userId === DEFAULT_USER_ID) {
+    throw createHttpError(
+      403,
+      'The demo planner is read-only. Create your own planner to save changes.'
+    );
+  }
+}
+
 function createExpenseBreakdown(defaultOther = 0) {
   return {
     food: 0,
@@ -267,6 +276,7 @@ export async function createUserPlan(planData) {
   }
 
   const normalizedUserId = normalizeUserId(planData.userId);
+  assertWritableUserId(normalizedUserId);
   const nextPlan = normalizePlanData({
     ...planData,
     userId: normalizedUserId
@@ -284,6 +294,7 @@ export async function updateUserPlan(userId, partialData) {
   }
 
   const normalizedUserId = normalizeUserId(userId || partialData.userId);
+  assertWritableUserId(normalizedUserId);
   const currentPlan = await getUserPlan(normalizedUserId);
   const nextPlan = normalizePlanData(mergeDeep(currentPlan, {
     ...partialData,

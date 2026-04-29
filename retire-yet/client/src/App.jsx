@@ -13,6 +13,8 @@ import {
 } from 'recharts';
 import {
   DEFAULT_USER_ID,
+  FRONTEND_STORAGE_VERSION,
+  FRONTEND_VERSION,
   createCareerPhase,
   createExpenseBreakdown,
   createOtherIncomeStream,
@@ -31,9 +33,20 @@ import {
   stepLabels
 } from './planModel';
 
+const BRAND_NAME = 'Clarity Path';
+const BRAND_TAGLINE = 'Plan to Retire Well.';
+const STORAGE_THEME_KEY = 'clarity-path-theme';
+const LIGHT_THEME = 'light';
+const DARK_THEME = 'dark';
+
 function App() {
+  const [appView, setAppView] = useState(getInitialAppView);
+  const [theme, setTheme] = useState(getInitialTheme);
+  const [authMode, setAuthMode] = useState('signIn');
+  const [authEmail, setAuthEmail] = useState(getInitialAuthEmail);
+  const [authName, setAuthName] = useState('');
   const [currentUserId, setCurrentUserId] = useState(getInitialUserId);
-  const [userIdDraft, setUserIdDraft] = useState(getInitialUserId);
+  const [signedInEmail, setSignedInEmail] = useState(getInitialAuthEmail);
   const [planData, setPlanData] = useState(defaultPlanData);
   const [projectionData, setProjectionData] = useState(null);
   const [selectedMarketScenario, setSelectedMarketScenario] = useState('significantlyBelowAverage');
@@ -45,12 +58,37 @@ function App() {
   const [successMessage, setSuccessMessage] = useState('');
 
   useEffect(() => {
+    if (appView !== 'planner') {
+      return;
+    }
+
     void loadDashboardData();
-  }, [currentUserId]);
+  }, [appView, currentUserId]);
 
   useEffect(() => {
-    window.localStorage.setItem('retire-yet-user-id', currentUserId);
-  }, [currentUserId]);
+    document.documentElement.dataset.theme = theme;
+    document.documentElement.style.colorScheme = theme;
+    window.localStorage.setItem(STORAGE_THEME_KEY, theme);
+  }, [theme]);
+
+  useEffect(() => {
+    if (appView === 'planner') {
+      window.localStorage.setItem('retire-yet-user-id', currentUserId);
+    }
+  }, [appView, currentUserId]);
+
+  useEffect(() => {
+    if (signedInEmail) {
+      window.localStorage.setItem('retire-yet-auth-email', signedInEmail);
+      return;
+    }
+
+    window.localStorage.removeItem('retire-yet-auth-email');
+  }, [signedInEmail]);
+
+  useEffect(() => {
+    window.localStorage.setItem('retire-yet-app-view', appView);
+  }, [appView]);
 
   async function loadDashboardData() {
     setIsLoading(true);
@@ -335,10 +373,20 @@ function App() {
   }
 
   function goToNextStep() {
+    void proceedToNextStep();
+  }
+
+  async function proceedToNextStep() {
     const currentStepErrors = getStepValidationErrors(planData, currentStep);
 
     if (currentStepErrors.length > 0) {
       setError(`Complete ${stepLabels[currentStep]} before moving to the next step.`);
+      return;
+    }
+
+    const saveSucceeded = await persistPlanData({ showSuccessMessage: false });
+
+    if (!saveSucceeded) {
       return;
     }
 
@@ -351,6 +399,10 @@ function App() {
   }
 
   function handleStepSelection(targetStep) {
+    void navigateToStep(targetStep);
+  }
+
+  async function navigateToStep(targetStep) {
     if (targetStep <= currentStep) {
       setCurrentStep(targetStep);
       return;
@@ -364,34 +416,64 @@ function App() {
       return;
     }
 
+    const saveSucceeded = await persistPlanData({ showSuccessMessage: false });
+
+    if (!saveSucceeded) {
+      return;
+    }
+
     setError('');
     setCurrentStep(targetStep);
   }
 
-  function handleUserSwitch(event) {
+  function handleLocalIdentitySubmit(event) {
     event.preventDefault();
 
-    const normalizedUserId = normalizeUserIdInput(userIdDraft);
+    const normalizedEmail = normalizeEmailInput(authEmail);
 
-    if (!normalizedUserId) {
-      setError('Enter a planner ID to load or create a local test user.');
+    if (!normalizedEmail) {
+      setError('Enter your email address to continue.');
       return;
     }
 
-    if (normalizedUserId === currentUserId) {
-      return;
-    }
-
-    setCurrentUserId(normalizedUserId);
+    const nextUserId = createUserIdFromEmail(normalizedEmail);
+    setSignedInEmail(normalizedEmail);
+    setCurrentUserId(nextUserId);
+    setAuthEmail(normalizedEmail);
     setSuccessMessage('');
     setError('');
+    setAppView('planner');
   }
 
-  async function handleSubmit(event) {
-    event.preventDefault();
-    setIsSubmitting(true);
+  function handleDemoAccess() {
+    setSignedInEmail('demo@retireyet.local');
+    setAuthEmail('demo@retireyet.local');
+    setCurrentUserId(DEFAULT_USER_ID);
     setError('');
     setSuccessMessage('');
+    setAppView('planner');
+  }
+
+  function handleSignOut() {
+    setAppView('auth');
+    setProjectionData(null);
+    setIsLoading(false);
+    setError('');
+    setSuccessMessage('');
+  }
+
+  async function persistPlanData({ showSuccessMessage = true } = {}) {
+    if (currentUserId === DEFAULT_USER_ID) {
+      setError('The demo planner is read-only. Create your own planner to save changes.');
+      setSuccessMessage('');
+      return false;
+    }
+
+    setIsSubmitting(true);
+    setError('');
+    if (showSuccessMessage) {
+      setSuccessMessage('');
+    }
 
     try {
       const response = await fetch(getUserApiUrl(currentUserId), {
@@ -415,27 +497,99 @@ function App() {
       const summaryGate = getSummaryGateState(mergedPlan);
 
       setPlanData(mergedPlan);
-      setSuccessMessage('Plan saved.');
+      if (showSuccessMessage) {
+        setSuccessMessage('Plan saved.');
+      }
       if (summaryGate.canAccessSummary && currentStep === stepLabels.length - 2) {
         setCurrentStep(stepLabels.length - 1);
       }
 
       try {
         await loadProjectionOnly();
-        setSuccessMessage('Plan saved and projections refreshed.');
+        if (showSuccessMessage) {
+          setSuccessMessage('Plan saved and projections refreshed.');
+        }
       } catch (projectionError) {
-        setSuccessMessage('Plan saved, but projections could not be refreshed automatically.');
+        if (showSuccessMessage) {
+          setSuccessMessage('Plan saved, but projections could not be refreshed automatically.');
+        }
       }
+
+      return true;
     } catch (submitError) {
       setError(getFriendlyErrorMessage(submitError.message));
+      return false;
     } finally {
       setIsSubmitting(false);
     }
   }
 
+  async function handleSubmit(event) {
+    event.preventDefault();
+    await persistPlanData({ showSuccessMessage: true });
+  }
+
+  if (appView === 'splash') {
+    return (
+      <main className="app-shell marketing-shell">
+        <ThemeToggle
+          theme={theme}
+          onToggle={() => setTheme(theme === DARK_THEME ? LIGHT_THEME : DARK_THEME)}
+        />
+        <SplashPage
+          frontendVersion={FRONTEND_VERSION}
+          theme={theme}
+          onExploreDemo={handleDemoAccess}
+          onGetStarted={() => {
+            setAuthMode('register');
+            setAppView('auth');
+          }}
+          onSignIn={() => {
+            setAuthMode('signIn');
+            setAppView('auth');
+          }}
+        />
+      </main>
+    );
+  }
+
+  if (appView === 'auth') {
+    return (
+      <main className="app-shell marketing-shell">
+        <ThemeToggle
+          theme={theme}
+          onToggle={() => setTheme(theme === DARK_THEME ? LIGHT_THEME : DARK_THEME)}
+        />
+        <AuthPage
+          authEmail={authEmail}
+          authMode={authMode}
+          authName={authName}
+          error={error}
+          frontendVersion={FRONTEND_VERSION}
+          onBack={() => {
+            setError('');
+            setAppView('splash');
+          }}
+          onDemoAccess={handleDemoAccess}
+          onEmailChange={setAuthEmail}
+          onNameChange={setAuthName}
+          onSubmit={handleLocalIdentitySubmit}
+          onSwitchMode={(mode) => {
+            setAuthMode(mode);
+            setError('');
+          }}
+        />
+      </main>
+    );
+  }
+
   if (isLoading) {
     return (
       <main className="app-shell">
+        <ThemeToggle
+          theme={theme}
+          onToggle={() => setTheme(theme === DARK_THEME ? LIGHT_THEME : DARK_THEME)}
+        />
         <section className="planner-layout">
           <p className="status-text">Loading your plan and projections...</p>
         </section>
@@ -444,11 +598,13 @@ function App() {
   }
 
   const yearlyResults = projectionData?.yearlyResults ?? [];
+  const chartPalette = getChartPalette(theme);
   const scenarioOptions = Object.values(projectionData?.marketScenarios ?? {});
   const activeMarketScenario =
     projectionData?.marketScenarios?.[selectedMarketScenario] ??
     scenarioOptions[0] ??
     null;
+  const isDemoUser = currentUserId === DEFAULT_USER_ID;
   const summaryStepIndex = stepLabels.length - 1;
   const summaryGate = getSummaryGateState(planData);
   const canAccessSummary = summaryGate.canAccessSummary;
@@ -566,33 +722,35 @@ function App() {
 
   return (
     <main className="app-shell">
+      <ThemeToggle
+        theme={theme}
+        onToggle={() => setTheme(theme === DARK_THEME ? LIGHT_THEME : DARK_THEME)}
+      />
       <section className="planner-layout">
         <aside className="step-sidebar">
-          <p className="eyebrow">Retirement Planner</p>
-          <h1>Build and stress-test your plan</h1>
+          <p className="eyebrow">{BRAND_NAME}</p>
+          <h1>{BRAND_TAGLINE}</h1>
           <p className="subtle">
-            Edit income, assets, and real-estate sale rules, then inspect how the plan evolves.
+            Build and stress-test your plan with clearer income, housing, and withdrawal modeling.
           </p>
+          <p className="version-chip">UI {FRONTEND_VERSION}</p>
 
-          <form className="user-switcher" onSubmit={handleUserSwitch}>
-            <label className="field compact-field">
-              <span>Planner ID</span>
-              <input
-                type="text"
-                value={userIdDraft}
-                onChange={(event) => setUserIdDraft(event.target.value)}
-                placeholder="demo-user"
-              />
+          <div className="user-switcher">
+            <div className="account-summary">
+              <span className="eyebrow">Account</span>
+              <strong>{signedInEmail || 'Local planner session'}</strong>
               <small>
-                Local multi-user testing only. Loading a new ID creates a separate planner.
+                {isDemoUser
+                  ? 'This is the read-only demo planner. Explore every step, chart, and report, then create your own planner to make changes.'
+                  : 'Magic-link auth is the next step. For now this email maps to a local planner profile.'}
               </small>
-            </label>
-            <button type="submit" className="secondary-button">
-              Load planner
+            </div>
+            <button type="button" className="secondary-button" onClick={handleSignOut}>
+              Sign out
             </button>
-          </form>
+          </div>
 
-          <p className="subtle active-user-label">Active planner: {currentUserId}</p>
+          <p className="subtle active-user-label">Planner key: {currentUserId}</p>
 
           <ol className="step-list">
             {stepLabels.map((label, index) => (
@@ -641,30 +799,39 @@ function App() {
                 </div>
               ) : null}
 
+              {isDemoUser ? (
+                <p className="status-text">
+                  Demo planner is read-only. You can move through the steps and review the sample
+                  data, but editing and saving are disabled for this account.
+                </p>
+              ) : null}
+
               {error ? <p className="status-text error-text">{error}</p> : null}
               {successMessage ? <p className="status-text success-text">{successMessage}</p> : null}
 
-              <FormStep
-                currentStep={currentStep}
-                planData={planData}
-                updateCareerPhase={updateCareerPhase}
-                updateExpenseCategory={updateExpenseCategory}
-                updateNestedSection={updateNestedSection}
-                updateOtherIncomeStream={updateOtherIncomeStream}
-                updateProperty={updateProperty}
-                updatePropertyMortgage={updatePropertyMortgage}
-                setPropertyPaidOff={setPropertyPaidOff}
-                updateRental={updateRental}
-                updateTopLevelSection={updateTopLevelSection}
-                addCareerPhase={addCareerPhase}
-                addOtherIncomeStream={addOtherIncomeStream}
-                addProperty={addProperty}
-                addRental={addRental}
-                removeCareerPhase={removeCareerPhase}
-                removeOtherIncomeStream={removeOtherIncomeStream}
-                removeProperty={removeProperty}
-                removeRental={removeRental}
-              />
+              <fieldset className="form-fieldset" disabled={isDemoUser}>
+                <FormStep
+                  currentStep={currentStep}
+                  planData={planData}
+                  updateCareerPhase={updateCareerPhase}
+                  updateExpenseCategory={updateExpenseCategory}
+                  updateNestedSection={updateNestedSection}
+                  updateOtherIncomeStream={updateOtherIncomeStream}
+                  updateProperty={updateProperty}
+                  updatePropertyMortgage={updatePropertyMortgage}
+                  setPropertyPaidOff={setPropertyPaidOff}
+                  updateRental={updateRental}
+                  updateTopLevelSection={updateTopLevelSection}
+                  addCareerPhase={addCareerPhase}
+                  addOtherIncomeStream={addOtherIncomeStream}
+                  addProperty={addProperty}
+                  addRental={addRental}
+                  removeCareerPhase={removeCareerPhase}
+                  removeOtherIncomeStream={removeOtherIncomeStream}
+                  removeProperty={removeProperty}
+                  removeRental={removeRental}
+                />
+              </fieldset>
 
               <StepNavigation
                 currentStep={currentStep}
@@ -673,7 +840,7 @@ function App() {
                 onPrevious={goToPreviousStep}
                 canAccessSummary={canAccessSummary}
                 isCurrentStepValid={currentStepValidationErrors.length === 0}
-                showSave
+                showSave={!isDemoUser}
               />
             </form>
           ) : null}
@@ -681,6 +848,7 @@ function App() {
           {isSummaryStep ? (
             <Dashboard
               activeMarketScenario={activeMarketScenario}
+              chartPalette={chartPalette}
               endOfLifeAssetData={endOfLifeAssetData}
               incomeExpenseData={incomeExpenseData}
               latestYear={latestYear}
@@ -731,6 +899,7 @@ function App() {
 
 function Dashboard({
   activeMarketScenario,
+  chartPalette,
   currentStep,
   endOfLifeAssetData,
   error,
@@ -833,27 +1002,45 @@ function Dashboard({
         >
           <ResponsiveContainer width="100%" height={280}>
             <LineChart data={netWorthData}>
-              <CartesianGrid stroke="#dbe7e1" strokeDasharray="3 3" />
-              <XAxis dataKey="age" tickLine={false} axisLine={false} />
+              <CartesianGrid stroke={chartPalette.grid} strokeDasharray="3 3" />
+              <XAxis
+                dataKey="age"
+                tickLine={false}
+                axisLine={false}
+                stroke={chartPalette.axis}
+                tick={{ fill: chartPalette.axis }}
+              />
               <YAxis
                 tickFormatter={formatCurrencyCompact}
                 tickLine={false}
                 axisLine={false}
                 width={72}
+                stroke={chartPalette.axis}
+                tick={{ fill: chartPalette.axis }}
               />
-              <Tooltip formatter={tooltipCurrency} />
-              <Line type="monotone" dataKey="netWorth" stroke="#173042" strokeWidth={3} dot={false} />
+              <Tooltip
+                contentStyle={chartPalette.tooltipContentStyle}
+                labelStyle={chartPalette.tooltipLabelStyle}
+                formatter={tooltipCurrency}
+              />
+              <Line
+                type="monotone"
+                dataKey="netWorth"
+                stroke={chartPalette.netWorth}
+                strokeWidth={3}
+                dot={false}
+              />
               <Line
                 type="monotone"
                 dataKey="retirementBalance"
-                stroke="#4d8f7a"
+                stroke={chartPalette.positive}
                 strokeWidth={2}
                 dot={false}
               />
               <Line
                 type="monotone"
                 dataKey="realEstateEquity"
-                stroke="#d18d47"
+                stroke={chartPalette.accent}
                 strokeWidth={2}
                 dot={false}
               />
@@ -867,17 +1054,29 @@ function Dashboard({
         >
           <ResponsiveContainer width="100%" height={280}>
             <BarChart data={incomeExpenseData}>
-              <CartesianGrid stroke="#dbe7e1" strokeDasharray="3 3" />
-              <XAxis dataKey="age" tickLine={false} axisLine={false} />
+              <CartesianGrid stroke={chartPalette.grid} strokeDasharray="3 3" />
+              <XAxis
+                dataKey="age"
+                tickLine={false}
+                axisLine={false}
+                stroke={chartPalette.axis}
+                tick={{ fill: chartPalette.axis }}
+              />
               <YAxis
                 tickFormatter={formatCurrencyCompact}
                 tickLine={false}
                 axisLine={false}
                 width={72}
+                stroke={chartPalette.axis}
+                tick={{ fill: chartPalette.axis }}
               />
-              <Tooltip formatter={tooltipCurrency} />
-              <Bar dataKey="income" fill="#4d8f7a" radius={[6, 6, 0, 0]} />
-              <Bar dataKey="expenses" fill="#d18d47" radius={[6, 6, 0, 0]} />
+              <Tooltip
+                contentStyle={chartPalette.tooltipContentStyle}
+                labelStyle={chartPalette.tooltipLabelStyle}
+                formatter={tooltipCurrency}
+              />
+              <Bar dataKey="income" fill={chartPalette.positive} radius={[6, 6, 0, 0]} />
+              <Bar dataKey="expenses" fill={chartPalette.accent} radius={[6, 6, 0, 0]} />
             </BarChart>
           </ResponsiveContainer>
         </ChartCard>
@@ -890,9 +1089,9 @@ function Dashboard({
             <div
               className="readiness-ring"
               style={{
-                background: `conic-gradient(#4d8f7a 0deg, #4d8f7a ${
+                background: `conic-gradient(${chartPalette.positive} 0deg, ${chartPalette.positive} ${
                   readinessScore * 3.6
-                }deg, #dde8e2 ${readinessScore * 3.6}deg, #dde8e2 360deg)`
+                }deg, ${chartPalette.grid} ${readinessScore * 3.6}deg, ${chartPalette.grid} 360deg)`
               }}
             >
               <div className="readiness-ring-inner">
@@ -939,12 +1138,14 @@ function Dashboard({
           <div className="monte-carlo-grid">
             <ResponsiveContainer width="100%" height={220}>
               <BarChart data={monteCarloData} layout="vertical" margin={{ left: 12 }}>
-                <CartesianGrid stroke="#dbe7e1" strokeDasharray="3 3" horizontal={false} />
+                <CartesianGrid stroke={chartPalette.grid} strokeDasharray="3 3" horizontal={false} />
                 <XAxis
                   type="number"
                   tickFormatter={formatCurrencyCompact}
                   tickLine={false}
                   axisLine={false}
+                  stroke={chartPalette.axis}
+                  tick={{ fill: chartPalette.axis }}
                 />
                 <YAxis
                   type="category"
@@ -952,8 +1153,14 @@ function Dashboard({
                   tickLine={false}
                   axisLine={false}
                   width={80}
+                  stroke={chartPalette.axis}
+                  tick={{ fill: chartPalette.axis }}
                 />
-                <Tooltip formatter={tooltipCurrency} />
+                <Tooltip
+                  contentStyle={chartPalette.tooltipContentStyle}
+                  labelStyle={chartPalette.tooltipLabelStyle}
+                  formatter={tooltipCurrency}
+                />
                 <Bar dataKey="value" radius={[0, 6, 6, 0]}>
                   {monteCarloData.map((entry) => (
                     <Cell key={entry.name} fill={entry.color} />
@@ -980,12 +1187,14 @@ function Dashboard({
           <div className="monte-carlo-grid">
             <ResponsiveContainer width="100%" height={220}>
               <BarChart data={endOfLifeAssetData} layout="vertical" margin={{ left: 12 }}>
-                <CartesianGrid stroke="#dbe7e1" strokeDasharray="3 3" horizontal={false} />
+                <CartesianGrid stroke={chartPalette.grid} strokeDasharray="3 3" horizontal={false} />
                 <XAxis
                   type="number"
                   tickFormatter={formatCurrencyCompact}
                   tickLine={false}
                   axisLine={false}
+                  stroke={chartPalette.axis}
+                  tick={{ fill: chartPalette.axis }}
                 />
                 <YAxis
                   type="category"
@@ -993,8 +1202,14 @@ function Dashboard({
                   tickLine={false}
                   axisLine={false}
                   width={80}
+                  stroke={chartPalette.axis}
+                  tick={{ fill: chartPalette.axis }}
                 />
-                <Tooltip formatter={tooltipCurrency} />
+                <Tooltip
+                  contentStyle={chartPalette.tooltipContentStyle}
+                  labelStyle={chartPalette.tooltipLabelStyle}
+                  formatter={tooltipCurrency}
+                />
                 <Bar dataKey="value" radius={[0, 6, 6, 0]}>
                   {endOfLifeAssetData.map((entry) => (
                     <Cell key={entry.name} fill={entry.color} />
@@ -1047,15 +1262,27 @@ function Dashboard({
           <div className="retirement-breakdown-grid">
             <ResponsiveContainer width="100%" height={220}>
               <BarChart data={retirementBreakdown}>
-                <CartesianGrid stroke="#dbe7e1" strokeDasharray="3 3" vertical={false} />
-                <XAxis dataKey="name" tickLine={false} axisLine={false} />
+                <CartesianGrid stroke={chartPalette.grid} strokeDasharray="3 3" vertical={false} />
+                <XAxis
+                  dataKey="name"
+                  tickLine={false}
+                  axisLine={false}
+                  stroke={chartPalette.axis}
+                  tick={{ fill: chartPalette.axis }}
+                />
                 <YAxis
                   tickFormatter={formatCurrencyCompact}
                   tickLine={false}
                   axisLine={false}
                   width={72}
+                  stroke={chartPalette.axis}
+                  tick={{ fill: chartPalette.axis }}
                 />
-                <Tooltip formatter={tooltipCurrency} />
+                <Tooltip
+                  contentStyle={chartPalette.tooltipContentStyle}
+                  labelStyle={chartPalette.tooltipLabelStyle}
+                  formatter={tooltipCurrency}
+                />
                 <Bar dataKey="value" radius={[6, 6, 0, 0]}>
                   {retirementBreakdown.map((entry) => (
                     <Cell key={entry.name} fill={entry.color} />
@@ -1086,6 +1313,456 @@ function Dashboard({
           showSave={false}
         />
       ) : null}
+    </section>
+  );
+}
+
+function SplashPage({ frontendVersion, onExploreDemo, onGetStarted, onSignIn, theme }) {
+  const chartPalette = getChartPalette(theme);
+  const previewNetWorthData = [
+    { age: 42, netWorth: 410000, retirementBalance: 180000 },
+    { age: 48, netWorth: 890000, retirementBalance: 420000 },
+    { age: 55, netWorth: 1760000, retirementBalance: 950000 },
+    { age: 60, netWorth: 2510000, retirementBalance: 1510000 },
+    { age: 70, netWorth: 3180000, retirementBalance: 2040000 }
+  ];
+  const previewScenarioData = [
+    { name: 'Well Below Avg', value: 9100, color: '#c96b5d' },
+    { name: 'Below Avg', value: 11850, color: '#d9a35b' },
+    { name: 'Average', value: 14725, color: '#4d8f7a' }
+  ];
+  const previewHousingEvents = [
+    { label: 'Sell primary home', timing: 'Sep 2027', value: '$312k to cash' },
+    { label: 'Rent in transition', timing: 'Oct 2027', value: '$4.8k / month' },
+    { label: 'Buy next home', timing: 'Jan 2028', value: '$900k down payment' }
+  ];
+  const previewRetirementBreakdown = [
+    { name: 'Cash', value: 640000, color: '#6f8ea4' },
+    { name: 'Brokerage', value: 880000, color: '#4d8f7a' },
+    { name: '401(k)', value: 1190000, color: '#d18d47' },
+    { name: 'IRA', value: 330000, color: '#8e7cc3' }
+  ];
+  const previewLedgerFunding = [
+    { label: 'Income', value: '$84.4k' },
+    { label: 'Cash reserves', value: '$15.4k' },
+    { label: 'Brokerage draw', value: '$0' },
+    { label: 'IRA draw', value: '$0' }
+  ];
+
+  return (
+    <section className="marketing-layout">
+      <div className="marketing-main-column">
+        <div className="hero-panel">
+        <p className="eyebrow">{BRAND_NAME}</p>
+        <p className="version-chip">UI {frontendVersion}</p>
+        <h1>{BRAND_TAGLINE}</h1>
+          <p className="hero-copy">
+            See your retirement path more clearly. Model income changes, retirement timing, home
+            sales, rental periods, and Monte Carlo market stress so you can tell whether the plan
+            still works before life forces the question.
+          </p>
+
+          <div className="feature-strip">
+            <span>Multi-income phases</span>
+            <span>Clergy housing allowance</span>
+            <span>Home sale proceeds routing</span>
+            <span>Withdrawal ledger</span>
+            <span>Retirement readiness</span>
+            <span>Housing timeline overlap warnings</span>
+          </div>
+        </div>
+
+        <section className="showcase-card">
+          <div className="showcase-card-header">
+            <div>
+              <p className="eyebrow">Visual Preview</p>
+              <h2>The splash page now previews the actual planner experience</h2>
+            </div>
+            <span className="showcase-badge">Live-style preview</span>
+          </div>
+
+          <div className="preview-grid">
+            <article className="preview-panel large-preview">
+              <div className="preview-head">
+                <strong>Projected net worth over time</strong>
+                <span>Average market path</span>
+              </div>
+              <ResponsiveContainer width="100%" height={220}>
+                <LineChart data={previewNetWorthData}>
+                  <CartesianGrid stroke={chartPalette.grid} strokeDasharray="3 3" />
+                  <XAxis
+                    dataKey="age"
+                    tickLine={false}
+                    axisLine={false}
+                    stroke={chartPalette.axis}
+                    tick={{ fill: chartPalette.axis }}
+                  />
+                  <YAxis
+                    tickFormatter={formatCurrencyCompact}
+                    tickLine={false}
+                    axisLine={false}
+                    width={64}
+                    stroke={chartPalette.axis}
+                    tick={{ fill: chartPalette.axis }}
+                  />
+                  <Tooltip
+                    contentStyle={chartPalette.tooltipContentStyle}
+                    labelStyle={chartPalette.tooltipLabelStyle}
+                    formatter={tooltipCurrency}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="netWorth"
+                    stroke={chartPalette.netWorth}
+                    strokeWidth={3}
+                    dot={false}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="retirementBalance"
+                    stroke={chartPalette.positive}
+                    strokeWidth={2}
+                    dot={false}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </article>
+
+            <article className="preview-panel">
+              <div className="preview-head">
+                <strong>Probability of Success</strong>
+                <span>Market cases from your planner</span>
+              </div>
+              <div className="preview-toggle-row">
+                <span className="preview-toggle-pill is-active">Well Below Average</span>
+                <span className="preview-toggle-pill">Below Average</span>
+                <span className="preview-toggle-pill">Average</span>
+              </div>
+              <ResponsiveContainer width="100%" height={190}>
+                <BarChart data={previewScenarioData} layout="vertical" margin={{ left: 6 }}>
+                  <CartesianGrid stroke={chartPalette.grid} strokeDasharray="3 3" horizontal={false} />
+                  <XAxis
+                    type="number"
+                    tickFormatter={(value) => `$${Math.round(value / 1000)}k`}
+                    tickLine={false}
+                    axisLine={false}
+                    stroke={chartPalette.axis}
+                    tick={{ fill: chartPalette.axis }}
+                  />
+                  <YAxis
+                    type="category"
+                    dataKey="name"
+                    tickLine={false}
+                    axisLine={false}
+                    width={88}
+                    stroke={chartPalette.axis}
+                    tick={{ fill: chartPalette.axis }}
+                  />
+                  <Tooltip
+                    contentStyle={chartPalette.tooltipContentStyle}
+                    labelStyle={chartPalette.tooltipLabelStyle}
+                    formatter={(value) => [`${formatCurrency(value)} / mo`]}
+                  />
+                  <Bar dataKey="value" radius={[0, 8, 8, 0]}>
+                    {previewScenarioData.map((entry) => (
+                      <Cell key={entry.name} fill={entry.color} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+              <div className="preview-stat-row">
+                <div>
+                  <span>Probability of success</span>
+                  <strong>92%</strong>
+                </div>
+                <div>
+                  <span>Recommended retirement spend</span>
+                  <strong>$11.8k / mo</strong>
+                </div>
+              </div>
+            </article>
+
+            <article className="preview-panel">
+              <div className="preview-head">
+                <strong>Housing transition timeline</strong>
+                <span>Real estate, rent, and cash impact</span>
+              </div>
+              <div className="housing-event-list">
+                {previewHousingEvents.map((event) => (
+                  <div key={event.label} className="housing-event-card">
+                    <div>
+                      <strong>{event.label}</strong>
+                      <span>{event.timing}</span>
+                    </div>
+                    <em>{event.value}</em>
+                  </div>
+                ))}
+              </div>
+            </article>
+
+            <article className="preview-panel">
+              <div className="preview-head">
+                <strong>Retirement assets at age 60</strong>
+                <span>Actual asset breakdown style from this app</span>
+              </div>
+              <ResponsiveContainer width="100%" height={210}>
+                <BarChart data={previewRetirementBreakdown}>
+                  <CartesianGrid stroke={chartPalette.grid} strokeDasharray="3 3" vertical={false} />
+                  <XAxis
+                    dataKey="name"
+                    tickLine={false}
+                    axisLine={false}
+                    stroke={chartPalette.axis}
+                    tick={{ fill: chartPalette.axis }}
+                  />
+                  <YAxis
+                    tickFormatter={formatCurrencyCompact}
+                    tickLine={false}
+                    axisLine={false}
+                    width={64}
+                    stroke={chartPalette.axis}
+                    tick={{ fill: chartPalette.axis }}
+                  />
+                  <Tooltip
+                    contentStyle={chartPalette.tooltipContentStyle}
+                    labelStyle={chartPalette.tooltipLabelStyle}
+                    formatter={tooltipCurrency}
+                  />
+                  <Bar dataKey="value" radius={[6, 6, 0, 0]}>
+                    {previewRetirementBreakdown.map((entry) => (
+                      <Cell key={entry.name} fill={entry.color} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </article>
+
+            <article className="preview-panel">
+              <div className="preview-head">
+                <strong>Withdrawal ledger</strong>
+                <span>See how expenses are actually funded year by year</span>
+              </div>
+              <div className="ledger-preview-row">
+                <div>
+                  <span>Age 50</span>
+                  <strong>Expenses funded</strong>
+                </div>
+                <em>Working year</em>
+              </div>
+              <div className="ledger-preview-grid">
+                {previewLedgerFunding.map((item) => (
+                  <div key={item.label} className="ledger-preview-card">
+                    <span>{item.label}</span>
+                    <strong>{item.value}</strong>
+                  </div>
+                ))}
+              </div>
+            </article>
+          </div>
+        </section>
+      </div>
+
+      <div className="marketing-column">
+        <section className="signup-showcase-card">
+          <div className="signup-showcase-copy">
+            <p className="eyebrow">Start Free</p>
+            <h2>Build your Clarity Path in minutes</h2>
+            <p className="subtle">
+              Create an account to build your own plan, or open the demo planner to inspect the
+              experience first.
+            </p>
+          </div>
+
+          <div className="signup-showcase-actions">
+            <button type="button" className="primary-button" onClick={onGetStarted}>
+              Create free account
+            </button>
+            <button type="button" className="secondary-button" onClick={onSignIn}>
+              Sign in
+            </button>
+          </div>
+
+          <div className="signup-showcase-divider" />
+
+          <div className="signup-showcase-demo">
+            <div>
+              <strong>Prefer to look around first?</strong>
+              <span>Open a prebuilt scenario with charts, Monte Carlo results, and housing events.</span>
+            </div>
+            <button type="button" className="secondary-button ghost-button" onClick={onExploreDemo}>
+              Try demo planner
+            </button>
+          </div>
+        </section>
+
+        <section className="marketing-card">
+          <h2>Why this planner feels different</h2>
+          <div className="hero-feature-list">
+            <article className="hero-feature-item">
+              <div className="hero-feature-icon">01</div>
+              <div>
+                <strong>Free to get started</strong>
+                <span>
+                  Open the planner, run a full retirement summary, and explore a realistic demo
+                  before committing to your own setup.
+                </span>
+              </div>
+            </article>
+            <article className="hero-feature-item">
+              <div className="hero-feature-icon">02</div>
+              <div>
+                <strong>Easy to understand</strong>
+                <span>
+                  Use guided steps, readable charts, and a year-by-year withdrawal ledger instead of
+                  trying to reverse-engineer spreadsheet math.
+                </span>
+              </div>
+            </article>
+            <article className="hero-feature-item">
+              <div className="hero-feature-icon">03</div>
+              <div>
+                <strong>Answers and insights</strong>
+                <span>
+                  Compare average, below-average, and well-below-average market paths with Monte
+                  Carlo probability of success, housing event impacts, and asset-by-asset drawdown visibility.
+                </span>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section className="marketing-card">
+          <h2>What the planner helps you answer</h2>
+          <ul className="marketing-list">
+            <li>How much monthly spending is realistic while still working?</li>
+            <li>How strong is your retirement plan under below-average markets?</li>
+            <li>When do you start drawing from cash, brokerage, IRA, and 401(k)?</li>
+            <li>What happens if you sell a home, rent, then buy again later?</li>
+            <li>How does clergy housing allowance affect take-home pay?</li>
+          </ul>
+        </section>
+
+        <section className="marketing-card emphasis-card">
+          <h2>Features that make this planner different</h2>
+          <ul className="marketing-list feature-list-tight">
+            <li>Clergy compensation with housing allowance tax treatment</li>
+            <li>Housing timeline with rentals, owned homes, and overlap warnings</li>
+            <li>Sale proceeds routed to cash or brokerage for future projections</li>
+            <li>Retirement asset breakdown at the actual retirement age</li>
+            <li>Withdrawal ledger showing income first, then asset draws</li>
+          </ul>
+        </section>
+      </div>
+    </section>
+  );
+}
+
+function AuthPage({
+  authEmail,
+  authMode,
+  authName,
+  error,
+  frontendVersion,
+  onBack,
+  onDemoAccess,
+  onEmailChange,
+  onNameChange,
+  onSubmit,
+  onSwitchMode
+}) {
+  const isRegisterMode = authMode === 'register';
+
+  return (
+    <section className="auth-layout">
+      <div className="marketing-card auth-copy-card">
+        <p className="eyebrow">{BRAND_NAME}</p>
+        <p className="version-chip">UI {frontendVersion}</p>
+        <h1>{isRegisterMode ? 'Create your planner account' : 'Welcome back to Clarity Path'}</h1>
+        <p className="subtle">
+          {BRAND_TAGLINE} This front door is ready for email magic-link auth. For now, your email
+          is mapped to a local planner profile so you can move through the product flow cleanly.
+        </p>
+
+        <div className="auth-benefit-list">
+          <div>
+            <strong>Private planner profile</strong>
+            <span>Use one email per local plan while auth is being finalized.</span>
+          </div>
+          <div>
+            <strong>Seamless upgrade path</strong>
+            <span>The same screen can later send a real magic link without a UI rewrite.</span>
+          </div>
+        </div>
+      </div>
+
+      <section className="auth-panel">
+        <div className="auth-panel-header">
+          <div className="auth-mode-toggle">
+            <button
+              type="button"
+              className={`auth-mode-button ${!isRegisterMode ? 'is-active' : ''}`}
+              onClick={() => onSwitchMode('signIn')}
+            >
+              Sign in
+            </button>
+            <button
+              type="button"
+              className={`auth-mode-button ${isRegisterMode ? 'is-active' : ''}`}
+              onClick={() => onSwitchMode('register')}
+            >
+              Register
+            </button>
+          </div>
+
+          <button type="button" className="text-button" onClick={onBack}>
+            Back
+          </button>
+        </div>
+
+        <form className="auth-form" onSubmit={onSubmit}>
+          {isRegisterMode ? (
+            <label className="field">
+              <span>Full name</span>
+              <input
+                type="text"
+                value={authName}
+                onChange={(event) => onNameChange(event.target.value)}
+                placeholder="Jane Planner"
+              />
+              <small>Optional for now. This is here so the registration flow feels complete.</small>
+            </label>
+          ) : null}
+
+          <label className="field">
+            <span>Email</span>
+            <input
+              type="email"
+              value={authEmail}
+              onChange={(event) => onEmailChange(event.target.value)}
+              placeholder="you@example.com"
+            />
+            <small>
+              This will become the email magic-link identity. For now it opens a local planner
+              profile keyed to this email.
+            </small>
+          </label>
+
+          {error ? <p className="status-text error-text">{error}</p> : null}
+
+          <button type="submit" className="primary-button">
+            {isRegisterMode ? 'Create local account' : 'Continue with email'}
+          </button>
+        </form>
+
+        <div className="auth-footer">
+          <p className="subtle">
+            Want to preview the experience before creating your own profile?
+          </p>
+          <button type="button" className="secondary-button" onClick={onDemoAccess}>
+            Open demo planner
+          </button>
+        </div>
+      </section>
     </section>
   );
 }
@@ -1223,7 +1900,7 @@ function WithdrawalLedger({ yearlyResults, retirementAge }) {
             {yearlyResults[yearlyResults.length - 1]?.age ?? '-'}
           </p>
         </div>
-        <span className="ledger-summary-action">Expand</span>
+        <DisclosureToggle collapsedLabel="View ledger" expandedLabel="Hide ledger" />
       </summary>
 
       <div className="ledger-overview">
@@ -1259,18 +1936,37 @@ function WithdrawalLedger({ yearlyResults, retirementAge }) {
           const liquidAssets = (year.balances?.cash ?? 0) + (year.balances?.brokerage ?? 0);
           const retirementAssets =
             (year.balances?.ira ?? 0) + (year.balances?.['401k'] ?? 0) + (year.balances?.rothIra ?? 0);
+          const depletionLabels = getLedgerDepletionLabels(year);
+          const cashDepleted = isLedgerAccountDepleted(year, 'cash');
+          const brokerageDepleted = isLedgerAccountDepleted(year, 'brokerage');
+          const iraDepleted = isLedgerAccountDepleted(year, 'ira');
+          const fourOhOneKDepleted = isLedgerAccountDepleted(year, '401k');
+          const rothIraDepleted = isLedgerAccountDepleted(year, 'rothIra');
+          const liquidAssetsDepleted = cashDepleted || brokerageDepleted;
+          const retirementAssetsDepleted = iraDepleted || fourOhOneKDepleted || rothIraDepleted;
+          const hasDepletionEvent = depletionLabels.length > 0;
 
           return (
             <details key={year.age} className="ledger-row">
               <summary className="ledger-row-summary">
-                <span>
+                <span className="ledger-row-heading">
+                  <DisclosureToggle collapsedLabel="Details" expandedLabel="Details" />
                   <strong>Age {year.age}</strong>
                   <small>{year.age >= retirementAge ? 'Retired' : 'Working'}</small>
                 </span>
                 <span>{formatCurrency(year.expenses)}</span>
-                <span>{formatExpenseFundingSummary(year.expenseFunding)}</span>
-                <span>{formatCurrency(liquidAssets)}</span>
-                <span>{formatCurrency(retirementAssets)}</span>
+                <span className={hasDepletionEvent ? 'ledger-summary-alert' : ''}>
+                  {formatExpenseFundingSummary(year.expenseFunding)}
+                  {hasDepletionEvent ? <small>{depletionLabels.join(' • ')}</small> : null}
+                </span>
+                <span className={liquidAssetsDepleted ? 'ledger-summary-alert' : ''}>
+                  {formatCurrency(liquidAssets)}
+                  {liquidAssetsDepleted ? <small>{cashDepleted ? 'Cash depleted' : 'Brokerage depleted'}</small> : null}
+                </span>
+                <span className={retirementAssetsDepleted ? 'ledger-summary-alert' : ''}>
+                  {formatCurrency(retirementAssets)}
+                  {retirementAssetsDepleted ? <small>{depletionLabels.filter((label) => !label.startsWith('Cash') && !label.startsWith('Brokerage')).join(' • ')}</small> : null}
+                </span>
                 <span>{formatCurrency(year.netWorth)}</span>
               </summary>
 
@@ -1302,11 +1998,21 @@ function WithdrawalLedger({ yearlyResults, retirementAge }) {
                   <div className="ledger-balance-card">
                     <span>End-of-year balances</span>
                     <ul>
-                      <li>Cash: {formatCurrency(year.balances?.cash ?? 0)}</li>
-                      <li>Brokerage: {formatCurrency(year.balances?.brokerage ?? 0)}</li>
-                      <li>IRA: {formatCurrency(year.balances?.ira ?? 0)}</li>
-                      <li>401(k): {formatCurrency(year.balances?.['401k'] ?? 0)}</li>
-                      <li>Roth IRA: {formatCurrency(year.balances?.rothIra ?? 0)}</li>
+                      <li className={cashDepleted ? 'ledger-balance-depleted' : ''}>
+                        Cash: {formatCurrency(year.balances?.cash ?? 0)}
+                      </li>
+                      <li className={brokerageDepleted ? 'ledger-balance-depleted' : ''}>
+                        Brokerage: {formatCurrency(year.balances?.brokerage ?? 0)}
+                      </li>
+                      <li className={iraDepleted ? 'ledger-balance-depleted' : ''}>
+                        IRA: {formatCurrency(year.balances?.ira ?? 0)}
+                      </li>
+                      <li className={fourOhOneKDepleted ? 'ledger-balance-depleted' : ''}>
+                        401(k): {formatCurrency(year.balances?.['401k'] ?? 0)}
+                      </li>
+                      <li className={rothIraDepleted ? 'ledger-balance-depleted' : ''}>
+                        Roth IRA: {formatCurrency(year.balances?.rothIra ?? 0)}
+                      </li>
                       <li>Real-estate equity: {formatCurrency(year.realEstateEquity ?? 0)}</li>
                     </ul>
                   </div>
@@ -1329,6 +2035,40 @@ function WithdrawalLedger({ yearlyResults, retirementAge }) {
         })}
       </div>
     </details>
+  );
+}
+
+function DisclosureToggle({ collapsedLabel = 'Expand', expandedLabel = 'Collapse' }) {
+  return (
+    <span className="disclosure-trigger" aria-hidden="true">
+      <span className="disclosure-indicator">
+        <span className="disclosure-collapsed-symbol">+</span>
+        <span className="disclosure-expanded-symbol">−</span>
+      </span>
+      <span className="disclosure-label">
+        <span className="disclosure-collapsed-label">{collapsedLabel}</span>
+        <span className="disclosure-expanded-label">{expandedLabel}</span>
+      </span>
+    </span>
+  );
+}
+
+function ThemeToggle({ theme, onToggle }) {
+  const isDark = theme === DARK_THEME;
+
+  return (
+    <button
+      type="button"
+      className="theme-toggle-button"
+      onClick={onToggle}
+      aria-label={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+      title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+    >
+      <span className="theme-toggle-icon" aria-hidden="true">
+        {isDark ? '☀' : '☾'}
+      </span>
+      <span>{isDark ? 'Light mode' : 'Dark mode'}</span>
+    </button>
   );
 }
 
@@ -2342,12 +3082,97 @@ function getInitialUserId() {
   return normalizeUserIdInput(storedUserId) || DEFAULT_USER_ID;
 }
 
+function getInitialAuthEmail() {
+  return window.localStorage.getItem('retire-yet-auth-email') ?? '';
+}
+
+function getInitialTheme() {
+  const storedTheme = window.localStorage.getItem(STORAGE_THEME_KEY);
+
+  if (storedTheme === LIGHT_THEME || storedTheme === DARK_THEME) {
+    return storedTheme;
+  }
+
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? DARK_THEME : LIGHT_THEME;
+}
+
+function getChartPalette(theme) {
+  const isDark = theme === DARK_THEME;
+
+  return {
+    axis: isDark ? '#9eb5c1' : '#60717b',
+    grid: isDark ? '#2d4352' : '#dbe7e1',
+    netWorth: isDark ? '#f2efe3' : '#173042',
+    positive: '#4d8f7a',
+    accent: '#d18d47',
+    tooltipContentStyle: {
+      backgroundColor: isDark ? '#102330' : '#ffffff',
+      border: `1px solid ${isDark ? '#2d4352' : '#d7e3de'}`,
+      borderRadius: '14px',
+      color: isDark ? '#eaf1f5' : '#173042',
+      boxShadow: isDark
+        ? '0 18px 36px rgba(0, 0, 0, 0.28)'
+        : '0 18px 36px rgba(23, 48, 66, 0.12)'
+    },
+    tooltipLabelStyle: {
+      color: isDark ? '#eaf1f5' : '#173042'
+    }
+  };
+}
+
+function getInitialAppView() {
+  const storedStorageVersion = window.localStorage.getItem('retire-yet-storage-version');
+
+  if (storedStorageVersion !== FRONTEND_STORAGE_VERSION) {
+    window.localStorage.removeItem('retire-yet-app-view');
+    window.localStorage.removeItem('retire-yet-auth-email');
+    window.localStorage.removeItem('retire-yet-user-id');
+    window.localStorage.setItem('retire-yet-storage-version', FRONTEND_STORAGE_VERSION);
+    return 'splash';
+  }
+
+  const storedView = window.localStorage.getItem('retire-yet-app-view');
+  const storedEmail = getInitialAuthEmail();
+  const storedUserId = getInitialUserId();
+
+  if (storedView === 'planner' && storedUserId) {
+    return 'planner';
+  }
+
+  if (storedView === 'auth') {
+    return 'auth';
+  }
+
+  if (storedEmail) {
+    return 'planner';
+  }
+
+  return 'splash';
+}
+
 function normalizeUserIdInput(value) {
   if (typeof value !== 'string') {
     return '';
   }
 
   return value.trim().replace(/\s+/g, '-').toLowerCase();
+}
+
+function normalizeEmailInput(value) {
+  if (typeof value !== 'string') {
+    return '';
+  }
+
+  return value.trim().toLowerCase();
+}
+
+function createUserIdFromEmail(email) {
+  return normalizeUserIdInput(
+    normalizeEmailInput(email)
+      .replace(/@/g, '-at-')
+      .replace(/[^a-z0-9.-]+/g, '-')
+      .replace(/\.+/g, '.')
+  );
 }
 
 function getSummaryGateState(planData) {
@@ -3442,6 +4267,69 @@ function formatExpenseFundingSummary(expenseFunding = {}) {
     .map(([label, amount]) => `${label} ${formatCurrencyCompact(amount)}`);
 
   return parts.length > 0 ? parts.join(' • ') : 'None';
+}
+
+function getLedgerAccountOrder(year) {
+  const orderedAccounts = Array.isArray(year?.withdrawalOrder) ? year.withdrawalOrder : [];
+
+  if (orderedAccounts[0] === 'cash') {
+    return orderedAccounts;
+  }
+
+  return ['cash', ...orderedAccounts];
+}
+
+function getLedgerAccountBalance(year, accountName) {
+  if (accountName === 'cash') {
+    return year?.balances?.cash ?? 0;
+  }
+
+  if (accountName === 'brokerage') {
+    return year?.balances?.brokerage ?? 0;
+  }
+
+  return year?.balances?.[accountName] ?? 0;
+}
+
+function getLedgerAccountFunding(year, accountName) {
+  if (accountName === 'cash') {
+    return year?.expenseFunding?.cash ?? 0;
+  }
+
+  return year?.expenseFunding?.[accountName] ?? 0;
+}
+
+function isLedgerAccountDepleted(year, accountName) {
+  const accountOrder = getLedgerAccountOrder(year);
+  const accountIndex = accountOrder.indexOf(accountName);
+
+  if (accountIndex === -1) {
+    return false;
+  }
+
+  const endingBalance = getLedgerAccountBalance(year, accountName);
+
+  if (endingBalance > 0) {
+    return false;
+  }
+
+  return accountOrder
+    .slice(accountIndex + 1)
+    .some((laterAccount) => getLedgerAccountFunding(year, laterAccount) > 0);
+}
+
+function getLedgerDepletionLabels(year) {
+  const ledgerAccountLabels = [
+    ['cash', 'Cash depleted'],
+    ['brokerage', 'Brokerage depleted'],
+    ['ira', 'IRA depleted'],
+    ['401k', '401(k) depleted'],
+    ['rothIra', 'Roth IRA depleted']
+  ];
+
+  return ledgerAccountLabels
+    .filter(([accountName]) => isLedgerAccountDepleted(year, accountName))
+    .map(([, label]) => label);
 }
 
 function formatWithdrawalOrder(order = []) {
