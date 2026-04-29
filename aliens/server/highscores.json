@@ -1,0 +1,30 @@
+[
+  {
+    "roomId": "room-3",
+    "score": 1830,
+    "wave": 11,
+    "players": [
+      "daddy"
+    ],
+    "finishedAt": "2026-04-29T04:27:04.218Z"
+  },
+  {
+    "roomId": "room-2",
+    "score": 940,
+    "wave": 8,
+    "players": [
+      "daddy",
+      "Pilot"
+    ],
+    "finishedAt": "2026-04-29T04:19:03.153Z"
+  },
+  {
+    "roomId": "room-1",
+    "score": 230,
+    "wave": 3,
+    "players": [
+      "daddy"
+    ],
+    "finishedAt": "2026-04-29T04:12:49.387Z"
+  }
+]

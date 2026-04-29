@@ -1,0 +1,14 @@
+{
+  "name": "aliens-coop",
+  "version": "1.0.0",
+  "description": "Simple multiplayer co-op alien defense game using Phaser, Express, and Socket.io",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "phaser": "^3.90.0",
+    "socket.io": "^4.8.1"
+  }
+}

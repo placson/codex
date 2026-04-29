@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Alien Co-op</title>
+    <link rel="stylesheet" href="/client/styles.css" />
+  </head>
+  <body>
+    <div id="shell">
+      <aside id="overlay" class="panel">
+        <h1>Alien Co-op</h1>
+        <p>Hold the line together. Move with WASD or arrows, aim with the mouse, and shoot with mouse click or spacebar.</p>
+        <label class="field" for="nameInput">
+          <span>Name</span>
+          <input id="nameInput" type="text" maxlength="18" placeholder="Pilot name" />
+        </label>
+        <button id="joinButton">Join Game</button>
+        <p id="roomStatus">Waiting to connect...</p>
+        <div id="shareBox" class="room-card"></div>
+        <div>
+          <h2>High Scores</h2>
+          <div id="highScores"></div>
+        </div>
+        <div id="rooms"></div>
+      </aside>
+      <section id="gameColumn">
+        <div id="hud" class="panel">
+          <span id="roomLabel">Room: -</span>
+          <span id="playerCountLabel">Players: 0</span>
+          <div id="healthPanel" class="hud-health">
+            <span id="healthLabel">Health: -</span>
+            <div id="healthBarTrack">
+              <div id="healthBarFill"></div>
+            </div>
+          </div>
+          <span id="scoreLabel">Score: 0</span>
+          <span id="waveLabel">Wave: 0</span>
+        </div>
+        <div id="game"></div>
+      </section>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="/phaser/phaser.js"></script>
+    <script src="/client/main.js"></script>
+  </body>
+</html>
